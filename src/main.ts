@@ -12,12 +12,16 @@ import { createHackboxSocket, type HackboxSocket } from "./hackboxSocket";
 
 const LS = {
   hostId: "h2k.hostId",
-  serverUrl: "h2k.serverUrl",
   roomCode: "h2k.roomCode",
   bindings: "h2k.bindings",
 } as const;
 
-const DEFAULT_SERVER = "https://hackbox.ca";
+// Fixed Hackbox deployment. The HTTP API is served under /api and the realtime
+// relay under /r/<code> on this same apex host (path-routed in production).
+const SERVER_URL = "https://hackbox.ca";
+const API_BASE = `${new URL(SERVER_URL).origin}/api`;
+const RELAY_HOST = new URL(SERVER_URL).host;
+const RELAY_PROTOCOL = new URL(SERVER_URL).protocol === "https:" ? "wss" : "ws";
 
 function getHostId(): string {
   let id = localStorage.getItem(LS.hostId);
@@ -89,16 +93,12 @@ let capturingFor: string | null = null; // userId awaiting a key capture
 // ---------------------------------------------------------------------------
 
 const el = {
-  serverUrl: document.getElementById("server-url") as HTMLInputElement,
   roomCode: document.getElementById("room-code") as HTMLSpanElement,
-  connectBtn: document.getElementById("connect-btn") as HTMLButtonElement,
   statusDot: document.getElementById("status-dot") as HTMLSpanElement,
   statusText: document.getElementById("status-text") as HTMLSpanElement,
   playerList: document.getElementById("player-list") as HTMLUListElement,
   emptyHint: document.getElementById("empty-hint") as HTMLParagraphElement,
 };
-
-el.serverUrl.value = localStorage.getItem(LS.serverUrl) || DEFAULT_SERVER;
 
 function setStatus(state: "online" | "offline" | "connecting", text: string) {
   el.statusDot.className = `dot ${state}`;
@@ -273,32 +273,30 @@ function pushButton(userId: string, name: string) {
   });
 }
 
+// Reasons partysocket recovers from on its own (it reconnects and re-fires
+// "connect"); anything else is a fatal close (room expired/gone, duplicate
+// device) that needs a brand-new room.
+const TRANSIENT_REASONS = new Set(["transport close", "transport error"]);
+let recreateTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleRecreate() {
+  if (recreateTimer !== null) return;
+  recreateTimer = setTimeout(() => {
+    recreateTimer = null;
+    localStorage.removeItem(LS.roomCode); // force a fresh room
+    void connect();
+  }, 3000);
+}
+
 async function connect() {
-  const serverUrl = el.serverUrl.value.trim().replace(/\/$/, "") || DEFAULT_SERVER;
-  localStorage.setItem(LS.serverUrl, serverUrl);
-
-  // The configured URL is the apex origin. The HTTP API is served under /api
-  // and the realtime relay under /r/<code> on the same host (path-routed in
-  // production); the relay protocol follows the URL scheme.
-  let url: URL;
-  try {
-    url = new URL(serverUrl);
-  } catch {
-    setStatus("offline", "Invalid server URL");
-    return;
-  }
-  const apiBase = `${url.origin}/api`;
-  const relayProtocol = url.protocol === "https:" ? "wss" : "ws";
-
   setStatus("connecting", "Connecting…");
-  el.connectBtn.disabled = true;
 
   let roomCode: string;
   try {
-    roomCode = await ensureRoom(apiBase);
+    roomCode = await ensureRoom(API_BASE);
   } catch (err) {
     setStatus("offline", `Room error: ${(err as Error).message}`);
-    el.connectBtn.disabled = false;
+    scheduleRecreate(); // retry shortly; no manual reconnect button
     return;
   }
 
@@ -306,22 +304,26 @@ async function connect() {
 
   socket?.close();
   socket = createHackboxSocket({
-    protocol: relayProtocol,
-    host: url.host,
+    protocol: RELAY_PROTOCOL,
+    host: RELAY_HOST,
     roomCode,
     userId: hostId,
   });
 
   socket.on("connect", () => {
     setStatus("online", `Hosting ${roomCode}`);
-    el.connectBtn.disabled = false;
-    el.connectBtn.textContent = "Reconnect";
   });
 
-  // partysocket auto-reconnects on transient drops; a fatal close (room gone,
-  // expired, etc.) won't reconnect and arrives with the server's reason.
   socket.on("disconnect", (reason) => {
-    setStatus("offline", `Disconnected: ${String(reason)}`);
+    const r = String(reason);
+    if (TRANSIENT_REASONS.has(r)) {
+      // partysocket is already reconnecting under the hood.
+      setStatus("connecting", "Reconnecting…");
+      return;
+    }
+    // Fatal: the room is gone. Spin up a new one automatically.
+    setStatus("offline", `Disconnected: ${r}`);
+    scheduleRecreate();
   });
 
   socket.on("error", (payload) => {
@@ -354,11 +356,7 @@ async function connect() {
   });
 }
 
-el.connectBtn.addEventListener("click", () => void connect());
-
-// Auto-connect on launch if we already have a server configured.
-if (localStorage.getItem(LS.serverUrl)) {
-  void connect();
-}
+// Create/reuse a room and connect immediately on launch.
+void connect();
 
 render();

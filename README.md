@@ -12,8 +12,9 @@ lives in a WebView, and key injection is done in Rust via
 ## How it works
 
 1. The app generates and persists a stable `hostId` (UUID).
-2. On connect it creates (or reuses) a room via `POST /api/rooms`, then opens a
-   raw WebSocket to the relay at `wss://<host>/r/<CODE>?userId=<hostId>` using
+2. On launch it immediately creates (or reuses) a room via `POST /api/rooms`
+   against the fixed Hackbox host (`https://hackbox.ca`), then opens a raw
+   WebSocket to the relay at `wss://<host>/r/<CODE>?userId=<hostId>` using
    [`partysocket`](https://www.npmjs.com/package/partysocket). The relay treats
    any connection whose `userId` equals the room's `hostId` as the host, so this
    app *is* the host. Frames are JSON envelopes `{ type, payload }`.
@@ -37,15 +38,14 @@ npm install
 npm run tauri dev
 ```
 
-Point the **Server URL** field at your Hackbox deployment's apex (defaults to
-`https://hackbox.ca`). The app derives the HTTP API (`<origin>/api`) and the
-realtime relay (`wss://<host>/r/<code>`) from it, so a single field works when
-both are path-routed on one host in production. (Local dev splits them across
-ports — api on `:8787`, relay on `:1999` — so point at whichever you're testing
-or front them with one origin.) Click **Connect**, and share the room code. Players
-join with the normal Hackbox client. For each player, click **Set key** and press
-the key — or modifier combo (e.g. Shift+J, Ctrl+Cmd+Space) — you want their button
-mapped to. Hold the modifiers and press the main key; Esc cancels capture.
+On launch the app creates a room against `https://hackbox.ca` automatically and
+shows the room code — no configuration. Share that code; players join with the
+normal Hackbox client. For each player, click **Set key** and press the key — or
+modifier combo (e.g. Shift+J, Ctrl+Cmd+Space) — you want their button mapped to.
+Hold the modifiers and press the main key; Esc cancels capture.
+
+The host is hardcoded ([`SERVER_URL` in `src/main.ts`](src/main.ts)); change it
+there to point at a local backend (api on `:8787`, relay on `:1999`) for dev.
 
 ## Build / package
 
