@@ -53,20 +53,23 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS self-signed signing (no Apple Developer account, no notarization).
-          # tauri-action imports the cert into a temp keychain and signs with it,
-          # giving the build a STABLE signature so the Accessibility (key-injection)
-          # grant persists across versions. If the secrets are unset these resolve
-          # to empty and the build is simply unsigned — nothing breaks.
+          # macOS signing is OFF by default (builds are unsigned). Do NOT define
+          # the APPLE_CERTIFICATE env var unless you actually have the secret:
+          # tauri-action runs `security import` whenever the var is *defined* —
+          # even as an empty string when the secret is unset — and importing an
+          # empty cert fails the whole build ("security import ... parameters not
+          # valid").
           #
-          # This does NOT remove the Gatekeeper "unidentified developer" warning on
-          # downloaded builds; only Apple notarization does. To add that later, set
-          # an Apple Developer cert here and also provide APPLE_ID / APPLE_PASSWORD /
-          # APPLE_TEAM_ID, which switches tauri-action into notarize mode.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          # To enable free self-signed signing (a stable signature so the macOS
+          # Accessibility key-injection grant persists), add the repo secrets
+          # described in the README, then UNCOMMENT the four lines below. (This
+          # does NOT remove the Gatekeeper download warning — only Apple
+          # notarization does: add APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID with an
+          # Apple Developer cert for that.)
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         with:
           args: ${{ matrix.args }}
           tagName: ${{ github.ref_name }}

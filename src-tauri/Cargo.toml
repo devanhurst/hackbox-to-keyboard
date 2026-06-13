@@ -1,6 +1,6 @@
 [package]
 name = "hackbox-to-keyboard"
-version = "3.1.1"
+version = "3.1.2"
 description = "Hackbox host client that casts player button presses to OS-level keypresses"
 edition = "2021"
 

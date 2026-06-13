@@ -89,9 +89,9 @@ the paid account, does that); locally-built apps run without that warning.
 
 #### Signing in CI
 
-The release workflow signs the macOS build with the same self-signed cert via
-`tauri-action` when these repo secrets are present (it builds unsigned if they
-aren't):
+Signing is **off by default** — the workflow builds an unsigned macOS app. To
+turn it on, add these repo secrets **and** uncomment the four `APPLE_*` /
+`KEYCHAIN_PASSWORD` env lines in `.github/workflows/release.yml`:
 
 | Secret | Value |
 | --- | --- |
@@ -99,6 +99,10 @@ aren't):
 | `APPLE_CERTIFICATE_PASSWORD` | the password set when exporting the `.p12` |
 | `APPLE_SIGNING_IDENTITY` | `Hackbox to Keyboard (Self-Signed)` |
 | `KEYCHAIN_PASSWORD` | any random string (for CI's temp keychain) |
+
+> Don't uncomment them without the secrets set: `tauri-action` tries to import
+> the certificate whenever `APPLE_CERTIFICATE` is defined, and an empty value
+> fails the build.
 
 Export the cert (Keychain Access → right-click the cert → **Export** → `.p12`),
 then set the secrets with the GitHub CLI:
