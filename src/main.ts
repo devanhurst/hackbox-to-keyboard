@@ -94,6 +94,7 @@ let capturingFor: string | null = null; // userId awaiting a key capture
 
 const el = {
   roomCode: document.getElementById("room-code") as HTMLSpanElement,
+  newRoomBtn: document.getElementById("new-room-btn") as HTMLButtonElement,
   statusDot: document.getElementById("status-dot") as HTMLSpanElement,
   statusText: document.getElementById("status-text") as HTMLSpanElement,
   playerList: document.getElementById("player-list") as HTMLUListElement,
@@ -289,6 +290,11 @@ function scheduleRecreate() {
 }
 
 async function connect() {
+  // Cancel a queued auto-recreate; we're (re)connecting now.
+  if (recreateTimer !== null) {
+    clearTimeout(recreateTimer);
+    recreateTimer = null;
+  }
   setStatus("connecting", "Connecting…");
 
   let roomCode: string;
@@ -355,6 +361,22 @@ async function connect() {
     pushButton(from, members[from]?.name || "");
   });
 }
+
+// Discard the current room and spin up a fresh one. The room is reused across
+// relaunches (ensureRoom reuses the stored code), so this is the only way to
+// rotate the code on demand. Existing players will need the new code to rejoin.
+async function newRoom() {
+  el.newRoomBtn.disabled = true;
+  localStorage.removeItem(LS.roomCode); // force ensureRoom to allocate a fresh code
+  members = {};
+  initialized.clear();
+  el.roomCode.textContent = "————";
+  render();
+  await connect();
+  el.newRoomBtn.disabled = false;
+}
+
+el.newRoomBtn.addEventListener("click", () => void newRoom());
 
 // Create/reuse a room and connect immediately on launch.
 void connect();
