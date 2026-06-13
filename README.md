@@ -68,13 +68,55 @@ Installers land in `src-tauri/target/release/bundle/` (`.app` and `.dmg`).
 > session. Prefix the build with `CI=true` to skip the styling and still get a
 > working DMG: `CI=true npm run tauri build`. (CI runners set this already.)
 
-**Sign it.** macOS ties the Accessibility permission to the app's code
-signature. An unsigned/ad-hoc build gets a new identity on every rebuild, so the
-OS forgets the grant and key injection silently stops until you re-add it. A
-stable Developer ID signature makes the grant persist. With an Apple Developer
-account, set `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`,
-`APPLE_TEAM_ID` (plus `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` in CI)
-and `tauri build` signs + notarizes.
+**Sign it (free, self-signed).** macOS ties the Accessibility permission to the
+app's code signature (its *designated requirement*). An unsigned/ad-hoc build
+gets a new identity on every rebuild, so the OS forgets the grant and key
+injection silently stops until you re-add it. Signing with a **self-signed**
+code-signing cert gives a stable identity — no Apple Developer account needed —
+so the grant persists. It does **not** remove the Gatekeeper "unidentified
+developer" warning on *downloaded* builds (only Apple notarization, which needs
+the paid account, does that); locally-built apps run without that warning.
+
+1. Create the cert: Keychain Access → **Certificate Assistant → Create a
+   Certificate…** → name `Hackbox to Keyboard (Self-Signed)`, Identity Type
+   **Self-Signed Root**, Certificate Type **Code Signing**.
+2. Build signed (env var keeps the identity out of the committed config):
+   ```bash
+   APPLE_SIGNING_IDENTITY="Hackbox to Keyboard (Self-Signed)" CI=true npm run tauri build
+   ```
+3. Grant Accessibility once (remove any stale entry first). Rebuilds with the
+   same cert keep the grant.
+
+#### Signing in CI
+
+The release workflow signs the macOS build with the same self-signed cert via
+`tauri-action` when these repo secrets are present (it builds unsigned if they
+aren't):
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_CERTIFICATE` | base64 of the cert exported as `.p12` (key included) |
+| `APPLE_CERTIFICATE_PASSWORD` | the password set when exporting the `.p12` |
+| `APPLE_SIGNING_IDENTITY` | `Hackbox to Keyboard (Self-Signed)` |
+| `KEYCHAIN_PASSWORD` | any random string (for CI's temp keychain) |
+
+Export the cert (Keychain Access → right-click the cert → **Export** → `.p12`),
+then set the secrets with the GitHub CLI:
+
+```bash
+base64 -i cert.p12 | gh secret set APPLE_CERTIFICATE
+printf '%s' 'YOUR_P12_PASSWORD' | gh secret set APPLE_CERTIFICATE_PASSWORD
+gh secret set APPLE_SIGNING_IDENTITY -b "Hackbox to Keyboard (Self-Signed)"
+gh secret set KEYCHAIN_PASSWORD -b "$(openssl rand -base64 24)"
+rm cert.p12
+```
+
+Use the **same** cert in CI as locally so a user who grants Accessibility to one
+release keeps it across future releases (the grant follows the cert).
+
+To upgrade to notarized builds later (removes the download warning), set an
+Apple Developer cert plus `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`, which
+switches `tauri-action` into notarize mode.
 
 ### Windows
 

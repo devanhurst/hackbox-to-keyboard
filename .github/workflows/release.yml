@@ -53,16 +53,20 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # --- macOS signing + notarization (optional) ---
-          # Uncomment and add the matching repo secrets to ship a signed,
-          # notarized build. Without these the macOS app is unsigned: Gatekeeper
-          # blocks it and the Accessibility permission won't persist across builds.
-          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # macOS self-signed signing (no Apple Developer account, no notarization).
+          # tauri-action imports the cert into a temp keychain and signs with it,
+          # giving the build a STABLE signature so the Accessibility (key-injection)
+          # grant persists across versions. If the secrets are unset these resolve
+          # to empty and the build is simply unsigned — nothing breaks.
+          #
+          # This does NOT remove the Gatekeeper "unidentified developer" warning on
+          # downloaded builds; only Apple notarization does. To add that later, set
+          # an Apple Developer cert here and also provide APPLE_ID / APPLE_PASSWORD /
+          # APPLE_TEAM_ID, which switches tauri-action into notarize mode.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         with:
           args: ${{ matrix.args }}
           tagName: ${{ github.ref_name }}
