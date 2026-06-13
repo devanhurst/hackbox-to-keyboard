@@ -52,6 +52,11 @@ npm run tauri build -- --target universal-apple-darwin
 
 Installers land in `src-tauri/target/release/bundle/` (`.app` and `.dmg`).
 
+> If `bundle_dmg.sh` fails locally ("error running bundle_dmg.sh"), it's the
+> AppleScript step that styles the DMG window — it needs an interactive Finder
+> session. Prefix the build with `CI=true` to skip the styling and still get a
+> working DMG: `CI=true npm run tauri build`. (CI runners set this already.)
+
 **Sign it.** macOS ties the Accessibility permission to the app's code
 signature. An unsigned/ad-hoc build gets a new identity on every rebuild, so the
 OS forgets the grant and key injection silently stops until you re-add it. A
