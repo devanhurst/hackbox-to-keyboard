@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hackbox → Keyboard</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main id="app">
+      <header class="topbar">
+        <h1>Hackbox&nbsp;→&nbsp;Keyboard</h1>
+        <div class="status">
+          <span id="status-dot" class="dot offline"></span>
+          <span id="status-text">Disconnected</span>
+        </div>
+      </header>
+
+      <section class="config">
+        <label>
+          Server URL
+          <input id="server-url" type="text" placeholder="http://localhost:9000" />
+        </label>
+        <div class="room">
+          <span class="room-label">Room code</span>
+          <span id="room-code" class="room-code">————</span>
+        </div>
+        <button id="connect-btn">Connect</button>
+      </section>
+
+      <section class="players">
+        <h2>Players</h2>
+        <ul id="player-list"></ul>
+        <p id="empty-hint" class="hint">No players yet. Share the room code to let people join.</p>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

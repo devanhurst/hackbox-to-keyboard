@@ -1,0 +1,211 @@
+:root {
+  --bg: #16161c;
+  --panel: #1f1f29;
+  --panel-2: #272733;
+  --text: #ececf1;
+  --muted: #9a9aae;
+  --accent: #7c5cff;
+  --online: #34d399;
+  --offline: #6b7280;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+#app {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 1.25rem 1.25rem 2rem;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.topbar h1 {
+  font-size: 1.15rem;
+  margin: 0;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--offline);
+}
+.dot.online {
+  background: var(--online);
+}
+.dot.connecting {
+  background: #fbbf24;
+}
+.dot.offline {
+  background: var(--offline);
+}
+
+.config {
+  margin-top: 1.25rem;
+  background: var(--panel);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.config label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.config input {
+  background: var(--panel-2);
+  border: 1px solid #34343f;
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.room {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.room-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.room-code {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 0.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+button {
+  cursor: pointer;
+  font: inherit;
+}
+
+#connect-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.6rem;
+  font-weight: 600;
+}
+#connect-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.players {
+  margin-top: 1.5rem;
+}
+
+.players h2 {
+  font-size: 0.9rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05rem;
+}
+
+#player-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.player {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  background: var(--panel);
+  border-radius: 0.6rem;
+  padding: 0.7rem 0.85rem;
+  transition: background 0.15s;
+}
+.player.offline {
+  opacity: 0.5;
+}
+.player.hit {
+  animation: hit 0.4s ease-out;
+}
+
+@keyframes hit {
+  0% {
+    background: var(--accent);
+  }
+  100% {
+    background: var(--panel);
+  }
+}
+
+.player-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.player-dot.online {
+  background: var(--online);
+}
+.player-dot.offline {
+  background: var(--offline);
+}
+
+.player-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.bind-btn {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid #3a3a47;
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.8rem;
+  min-width: 5rem;
+  font-weight: 600;
+}
+.bind-btn.unset {
+  color: var(--muted);
+  font-weight: 400;
+}
+.bind-btn.capturing {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
