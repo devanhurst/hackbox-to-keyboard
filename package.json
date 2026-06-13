@@ -1,7 +1,7 @@
 {
   "name": "hackbox-to-keyboard",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Hackbox host client that casts player button presses to OS-level keypresses",
   "scripts": {
