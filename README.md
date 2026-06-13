@@ -34,7 +34,8 @@ npm run tauri dev
 Point the **Server URL** field at your Hackbox server (default
 `http://localhost:9000`), click **Connect**, and share the room code. Players
 join with the normal Hackbox client. For each player, click **Set key** and press
-the key you want their button mapped to (Esc cancels capture).
+the key — or modifier combo (e.g. Shift+J, Ctrl+Cmd+Space) — you want their button
+mapped to. Hold the modifiers and press the main key; Esc cancels capture.
 
 ## Build / package
 

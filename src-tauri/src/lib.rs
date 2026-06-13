@@ -71,15 +71,43 @@ fn code_to_key(code: &str) -> Option<Key> {
     })
 }
 
-/// Tap a key (press + release) at the OS level. `code` is a browser
-/// `KeyboardEvent.code` value supplied by the frontend's key-capture UI.
+/// Map a modifier name from the frontend to its enigo key.
+fn modifier_to_key(name: &str) -> Option<Key> {
+    Some(match name {
+        "Control" => Key::Control,
+        "Alt" => Key::Alt,
+        "Shift" => Key::Shift,
+        "Meta" => Key::Meta,
+        _ => return None,
+    })
+}
+
+/// Tap a key (press + release) at the OS level, holding any modifiers down for
+/// the duration. `code` is a browser `KeyboardEvent.code`; `modifiers` are
+/// names like "Shift"/"Control"/"Alt"/"Meta" supplied by the capture UI.
 #[tauri::command]
-fn press_key(code: String) -> Result<(), String> {
+fn press_key(code: String, modifiers: Vec<String>) -> Result<(), String> {
     let key = code_to_key(&code).ok_or_else(|| format!("Unsupported key: {code}"))?;
+    let mods: Vec<Key> = modifiers
+        .iter()
+        .filter_map(|m| modifier_to_key(m))
+        .collect();
+
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
-    enigo
-        .key(key, Direction::Click)
-        .map_err(|e| e.to_string())?;
+
+    for m in &mods {
+        enigo.key(*m, Direction::Press).map_err(|e| e.to_string())?;
+    }
+
+    let tap = enigo.key(key, Direction::Click);
+
+    // Always release modifiers, even if the tap failed, so we don't leave a
+    // modifier stuck down at the OS level.
+    for m in mods.iter().rev() {
+        let _ = enigo.key(*m, Direction::Release);
+    }
+
+    tap.map_err(|e| e.to_string())?;
     Ok(())
 }
 

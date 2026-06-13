@@ -30,15 +30,41 @@ function getHostId(): string {
 
 const hostId = getHostId();
 
-// userId -> KeyboardEvent.code (e.g. "Space", "KeyA", "ArrowUp")
-type Bindings = Record<string, string>;
+// A binding is a main key (KeyboardEvent.code, e.g. "KeyA") plus zero or more
+// modifiers held down around it.
+type Modifier = "Control" | "Alt" | "Shift" | "Meta";
+interface Binding {
+  modifiers: Modifier[];
+  code: string;
+}
+// userId -> Binding
+type Bindings = Record<string, Binding>;
+
+const MODIFIER_ORDER: Modifier[] = ["Control", "Alt", "Shift", "Meta"];
 
 function loadBindings(): Bindings {
+  let raw: Record<string, unknown>;
   try {
-    return JSON.parse(localStorage.getItem(LS.bindings) || "{}");
+    raw = JSON.parse(localStorage.getItem(LS.bindings) || "{}");
   } catch {
     return {};
   }
+  const out: Bindings = {};
+  for (const [id, v] of Object.entries(raw)) {
+    // Migrate the old shape (plain "KeyA" string) to { modifiers, code }.
+    if (typeof v === "string") {
+      out[id] = { modifiers: [], code: v };
+    } else if (v && typeof v === "object" && typeof (v as Binding).code === "string") {
+      const b = v as Binding;
+      out[id] = {
+        code: b.code,
+        modifiers: Array.isArray(b.modifiers)
+          ? MODIFIER_ORDER.filter((m) => b.modifiers.includes(m))
+          : [],
+      };
+    }
+  }
+  return out;
 }
 
 function saveBindings(b: Bindings) {
@@ -97,6 +123,18 @@ function keyLabel(code: string): string {
   return map[code] || code;
 }
 
+const MOD_LABEL: Record<Modifier, string> = {
+  Control: "Ctrl",
+  Alt: "Alt",
+  Shift: "Shift",
+  Meta: "Meta",
+};
+
+// "Shift+J", "Ctrl+Meta+Space", etc.
+function bindingLabel(b: Binding): string {
+  return [...b.modifiers.map((m) => MOD_LABEL[m]), keyLabel(b.code)].join("+");
+}
+
 function render() {
   const list = Object.values(members).sort((a, b) => a.name.localeCompare(b.name));
   el.emptyHint.style.display = list.length ? "none" : "block";
@@ -114,7 +152,7 @@ function render() {
       <span class="player-dot ${m.online ? "online" : "offline"}"></span>
       <span class="player-name">${escapeHtml(m.name)}</span>
       <button class="bind-btn ${isCapturing ? "capturing" : ""} ${bound ? "" : "unset"}">
-        ${isCapturing ? "Press a key…" : bound ? keyLabel(bound) : "Set key"}
+        ${isCapturing ? "Press keys…" : bound ? bindingLabel(bound) : "Set key"}
       </button>
     `;
 
@@ -146,6 +184,20 @@ function flashPlayer(userId: string) {
 // Key capture: bind the next physical key to the selected player
 // ---------------------------------------------------------------------------
 
+// Codes for the modifier keys themselves — pressing one alone shouldn't finish
+// the capture; we wait for the main (non-modifier) key and record whichever
+// modifiers are held at that moment.
+const MODIFIER_CODES = new Set([
+  "ShiftLeft",
+  "ShiftRight",
+  "ControlLeft",
+  "ControlRight",
+  "AltLeft",
+  "AltRight",
+  "MetaLeft",
+  "MetaRight",
+]);
+
 window.addEventListener("keydown", (e) => {
   if (!capturingFor) return;
   e.preventDefault();
@@ -154,7 +206,15 @@ window.addEventListener("keydown", (e) => {
     render();
     return;
   }
-  bindings[capturingFor] = e.code;
+  if (MODIFIER_CODES.has(e.code)) return; // hold for the main key
+
+  const modifiers: Modifier[] = [];
+  if (e.ctrlKey) modifiers.push("Control");
+  if (e.altKey) modifiers.push("Alt");
+  if (e.shiftKey) modifiers.push("Shift");
+  if (e.metaKey) modifiers.push("Meta");
+
+  bindings[capturingFor] = { modifiers, code: e.code };
   saveBindings(bindings);
   capturingFor = null;
   render();
@@ -164,9 +224,9 @@ window.addEventListener("keydown", (e) => {
 // OS keypress dispatch (Rust/enigo via Tauri command)
 // ---------------------------------------------------------------------------
 
-async function pressKey(code: string) {
+async function pressKey(b: Binding) {
   try {
-    await invoke("press_key", { code });
+    await invoke("press_key", { code: b.code, modifiers: b.modifiers });
   } catch (err) {
     console.error("press_key failed", err);
   }
@@ -266,8 +326,8 @@ async function connect() {
     "msg",
     (payload: { from: string; message?: { value?: string } }) => {
       if (!payload?.from) return;
-      const code = bindings[payload.from];
-      if (code) void pressKey(code);
+      const binding = bindings[payload.from];
+      if (binding) void pressKey(binding);
       flashPlayer(payload.from);
       // Re-arm the player's button (clears its submitted/disabled state).
       pushButton(payload.from, members[payload.from]?.name || "");
