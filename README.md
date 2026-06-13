@@ -12,14 +12,20 @@ lives in a WebView, and key injection is done in Rust via
 ## How it works
 
 1. The app generates and persists a stable `hostId` (UUID).
-2. On connect it creates (or reuses) a room via `POST /rooms` on the Hackbox
-   server, then opens a Socket.io connection with `{ userId: hostId, roomCode }`.
-   The server routes any socket whose `userId` equals the room's `hostId` to the
-   host handler, so this app *is* the host.
+2. On connect it creates (or reuses) a room via `POST /api/rooms`, then opens a
+   raw WebSocket to the relay at `wss://<host>/r/<CODE>?userId=<hostId>` using
+   [`partysocket`](https://www.npmjs.com/package/partysocket). The relay treats
+   any connection whose `userId` equals the room's `hostId` as the host, so this
+   app *is* the host. Frames are JSON envelopes `{ type, payload }`.
 3. It pushes a single full-screen `Button` view to every player who joins.
-4. When a player taps, the server forwards a `msg` event. The app looks up that
+4. When a player taps, the relay forwards a `msg` frame. The app looks up that
    player's key binding and calls the `press_key` Rust command, which uses
    `enigo` to tap the key system-wide. It then re-pushes the button to re-arm it.
+
+Hackbox migrated from socket.io to a Cloudflare relay (a Durable Object speaking
+raw WebSocket); the connector in [`src/hackboxSocket.ts`](src/hackboxSocket.ts)
+is ported from the hackbox client SDK and re-exposes a small `on`/`emit` surface
+over that envelope protocol, plus a `"ping"`/`"pong"` keepalive.
 
 Bindings (player → key) are stored in `localStorage`, keyed by `KeyboardEvent.code`
 (physical key), so layouts and game scancode reads behave predictably.
@@ -31,9 +37,12 @@ npm install
 npm run tauri dev
 ```
 
-Point the **Server URL** field at your Hackbox server (defaults to
-`https://app.hackbox.ca`; use `http://localhost:9000` for local dev), click
-**Connect**, and share the room code. Players
+Point the **Server URL** field at your Hackbox deployment's apex (defaults to
+`https://hackbox.ca`). The app derives the HTTP API (`<origin>/api`) and the
+realtime relay (`wss://<host>/r/<code>`) from it, so a single field works when
+both are path-routed on one host in production. (Local dev splits them across
+ports — api on `:8787`, relay on `:1999` — so point at whichever you're testing
+or front them with one origin.) Click **Connect**, and share the room code. Players
 join with the normal Hackbox client. For each player, click **Set key** and press
 the key — or modifier combo (e.g. Shift+J, Ctrl+Cmd+Space) — you want their button
 mapped to. Hold the modifiers and press the main key; Esc cancels capture.

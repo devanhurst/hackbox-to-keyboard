@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
-    "socket.io-client": "^4.7.5"
+    "partysocket": "^1.0.2"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

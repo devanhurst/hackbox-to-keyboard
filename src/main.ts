@@ -1,6 +1,6 @@
-import { io, type Socket } from "socket.io-client";
 import { invoke } from "@tauri-apps/api/core";
 import { buttonState } from "./memberState";
+import { createHackboxSocket, type HackboxSocket } from "./hackboxSocket";
 
 // ---------------------------------------------------------------------------
 // Persistent identity + config
@@ -17,7 +17,7 @@ const LS = {
   bindings: "h2k.bindings",
 } as const;
 
-const DEFAULT_SERVER = "https://app.hackbox.ca";
+const DEFAULT_SERVER = "https://hackbox.ca";
 
 function getHostId(): string {
   let id = localStorage.getItem(LS.hostId);
@@ -79,7 +79,7 @@ interface Member {
   online: boolean;
 }
 
-let socket: Socket | null = null;
+let socket: HackboxSocket | null = null;
 let members: Record<string, Member> = {};
 const initialized = new Set<string>(); // players we've pushed the button UI to
 let capturingFor: string | null = null; // userId awaiting a key capture
@@ -236,12 +236,13 @@ async function pressKey(b: Binding) {
 // Room lifecycle
 // ---------------------------------------------------------------------------
 
-async function ensureRoom(serverUrl: string): Promise<string> {
+// `apiBase` is the HTTP front door, e.g. "https://app.hackbox.ca/api".
+async function ensureRoom(apiBase: string): Promise<string> {
   const existing = localStorage.getItem(LS.roomCode);
   if (existing) {
     try {
       const res = await fetch(
-        `${serverUrl}/rooms/${existing}?userId=${encodeURIComponent(hostId)}`,
+        `${apiBase}/rooms/${existing}?userId=${encodeURIComponent(hostId)}`,
       );
       const data = await res.json();
       if (data.exists) return existing;
@@ -250,7 +251,7 @@ async function ensureRoom(serverUrl: string): Promise<string> {
     }
   }
 
-  const res = await fetch(`${serverUrl}/rooms`, {
+  const res = await fetch(`${apiBase}/rooms`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ hostId }),
@@ -276,12 +277,25 @@ async function connect() {
   const serverUrl = el.serverUrl.value.trim().replace(/\/$/, "") || DEFAULT_SERVER;
   localStorage.setItem(LS.serverUrl, serverUrl);
 
+  // The configured URL is the apex origin. The HTTP API is served under /api
+  // and the realtime relay under /r/<code> on the same host (path-routed in
+  // production); the relay protocol follows the URL scheme.
+  let url: URL;
+  try {
+    url = new URL(serverUrl);
+  } catch {
+    setStatus("offline", "Invalid server URL");
+    return;
+  }
+  const apiBase = `${url.origin}/api`;
+  const relayProtocol = url.protocol === "https:" ? "wss" : "ws";
+
   setStatus("connecting", "Connecting…");
   el.connectBtn.disabled = true;
 
   let roomCode: string;
   try {
-    roomCode = await ensureRoom(serverUrl);
+    roomCode = await ensureRoom(apiBase);
   } catch (err) {
     setStatus("offline", `Room error: ${(err as Error).message}`);
     el.connectBtn.disabled = false;
@@ -290,10 +304,12 @@ async function connect() {
 
   el.roomCode.textContent = roomCode;
 
-  socket?.disconnect();
-  socket = io(serverUrl, {
-    query: { userId: hostId, roomCode },
-    transports: ["websocket"],
+  socket?.close();
+  socket = createHackboxSocket({
+    protocol: relayProtocol,
+    host: url.host,
+    roomCode,
+    userId: hostId,
   });
 
   socket.on("connect", () => {
@@ -302,15 +318,20 @@ async function connect() {
     el.connectBtn.textContent = "Reconnect";
   });
 
-  socket.on("disconnect", () => setStatus("offline", "Disconnected"));
-  socket.on("connect_error", (e) => setStatus("offline", `Connection error: ${e.message}`));
-  socket.on("error", (e: { message?: string }) =>
-    setStatus("offline", e?.message || "Server error"),
-  );
+  // partysocket auto-reconnects on transient drops; a fatal close (room gone,
+  // expired, etc.) won't reconnect and arrives with the server's reason.
+  socket.on("disconnect", (reason) => {
+    setStatus("offline", `Disconnected: ${String(reason)}`);
+  });
 
-  // Roster updates: server sends the full member map each time it changes.
-  socket.on("state.host", (state: { members: Record<string, Member> }) => {
-    members = state.members || {};
+  socket.on("error", (payload) => {
+    const message = (payload as { message?: string })?.message;
+    setStatus("offline", message || "Server error");
+  });
+
+  // Roster updates: relay sends the full member map each time it changes.
+  socket.on("state.host", (payload) => {
+    members = (payload as { members?: Record<string, Member> }).members || {};
     for (const m of Object.values(members)) {
       if (m.online && !initialized.has(m.id)) {
         initialized.add(m.id);
@@ -322,17 +343,15 @@ async function connect() {
   });
 
   // A player tapped their button.
-  socket.on(
-    "msg",
-    (payload: { from: string; message?: { value?: string } }) => {
-      if (!payload?.from) return;
-      const binding = bindings[payload.from];
-      if (binding) void pressKey(binding);
-      flashPlayer(payload.from);
-      // Re-arm the player's button (clears its submitted/disabled state).
-      pushButton(payload.from, members[payload.from]?.name || "");
-    },
-  );
+  socket.on("msg", (payload) => {
+    const from = (payload as { from?: string })?.from;
+    if (!from) return;
+    const binding = bindings[from];
+    if (binding) void pressKey(binding);
+    flashPlayer(from);
+    // Re-arm the player's button (clears its submitted/disabled state).
+    pushButton(from, members[from]?.name || "");
+  });
 }
 
 el.connectBtn.addEventListener("click", () => void connect());
