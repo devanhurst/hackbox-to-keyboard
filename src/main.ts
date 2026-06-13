@@ -17,7 +17,7 @@ const LS = {
   bindings: "h2k.bindings",
 } as const;
 
-const DEFAULT_SERVER = "http://localhost:9000";
+const DEFAULT_SERVER = "https://app.hackbox.ca";
 
 function getHostId(): string {
   let id = localStorage.getItem(LS.hostId);
