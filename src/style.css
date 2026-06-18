@@ -156,8 +156,7 @@ button {
 }
 
 select,
-input[type="text"],
-textarea {
+input[type="text"] {
   font: inherit;
   color: var(--text);
   background: var(--panel-2);
@@ -166,8 +165,7 @@ textarea {
   padding: 0.45rem 0.6rem;
 }
 select:focus,
-input[type="text"]:focus,
-textarea:focus {
+input[type="text"]:focus {
   outline: none;
   border-color: var(--accent);
 }
@@ -550,12 +548,6 @@ dialog::backdrop {
 .dialog-body h3 {
   margin: 0;
   font-size: 1.05rem;
-}
-.dialog-body textarea {
-  width: 100%;
-  resize: vertical;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.8rem;
 }
 
 .import-error {

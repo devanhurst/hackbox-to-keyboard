@@ -110,8 +110,8 @@ player every button shows its effective key — click one to set a **per-player
 override** (shown highlighted) and use **↺** to revert it to the layout default.
 
 **Share.** In the editor, **Export** copies the layout's JSON to the clipboard
-and downloads a `.hackboxkb.json` file; **Import** (on the Layouts screen)
-accepts pasted JSON or a file.
+and downloads a `.hackboxkb.json` file; **Import** (on the Layouts screen) takes
+that file.
 
 The host is hardcoded ([`SERVER_URL` in `src/main.ts`](src/main.ts)); change it
 there to point at a local backend (api on `:8787`, relay on `:1999`) for dev.

@@ -181,7 +181,6 @@ const el = {
   addButtonBtn: document.getElementById("add-button-btn") as HTMLButtonElement,
   // import dialog
   importDialog: document.getElementById("import-dialog") as HTMLDialogElement,
-  importText: document.getElementById("import-text") as HTMLTextAreaElement,
   importFile: document.getElementById("import-file") as HTMLInputElement,
   importError: document.getElementById("import-error") as HTMLParagraphElement,
   importConfirm: document.getElementById("import-confirm") as HTMLButtonElement,
@@ -1157,7 +1156,6 @@ async function exportLayoutFile(layout: Layout) {
 }
 
 function openImport() {
-  el.importText.value = "";
   el.importFile.value = "";
   el.importError.textContent = "";
   el.importDialog.showModal();
@@ -1202,14 +1200,19 @@ el.layoutName.addEventListener("input", () => {
 el.addButtonBtn.addEventListener("click", () => addButton());
 
 // import dialog
-el.importFile.addEventListener("change", async () => {
-  const file = el.importFile.files?.[0];
-  if (file) el.importText.value = await file.text();
+el.importFile.addEventListener("change", () => {
+  el.importError.textContent = ""; // clear a stale error when a new file is picked
 });
-// Validate before closing so a bad paste keeps the dialog open with the error.
-el.importConfirm.addEventListener("click", (e) => {
+// Read the chosen file and validate before closing, so a bad file keeps the
+// dialog open with the error shown.
+el.importConfirm.addEventListener("click", async (e) => {
   e.preventDefault();
-  if (applyImport(el.importText.value)) el.importDialog.close("import");
+  const file = el.importFile.files?.[0];
+  if (!file) {
+    el.importError.textContent = "Choose a file to import.";
+    return;
+  }
+  if (applyImport(await file.text())) el.importDialog.close("import");
 });
 
 // Show the home view, then create/reuse a room and connect on launch.
