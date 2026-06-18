@@ -24,15 +24,32 @@ function fontSize(count: number): string {
   return "1.4rem";
 }
 
-// What an unassigned player sees: a blank screen (just their header). Players
-// get this until the host assigns them a layout.
+// What an unassigned player sees: a centered "waiting" message. Players get
+// this until the host assigns them a layout. The `Text` component + prop shape
+// mirror the relay's own holding screen (defaultMemberState in
+// relay/src/roomState.ts), so it's a known-valid component the client renders.
 export function emptyState(headerText: string) {
   return {
     ui: {
       header: { text: headerText },
       main: {
         align: "center" as const,
-        components: [] as unknown[],
+        components: [
+          {
+            type: "Text",
+            props: {
+              text: "Waiting for host…",
+              style: {
+                align: "center",
+                border: "none",
+                color: "#EEE",
+                background: "transparent",
+                fontSize: "1.5rem",
+                fontFamily: "Fredoka One",
+              },
+            },
+          },
+        ],
       },
     },
   };
@@ -49,13 +66,20 @@ export function layoutState(headerText: string, layout: Layout) {
       event: b.id,
       value: b.id,
       label: b.label,
+      // Repeatable: the button never disables after a press, so taps map to
+      // keypresses again and again without the host re-pushing to re-arm it.
+      persistent: true,
       // Key(s) the player can press on their own device to fire this button.
       keys: b.playerKey ? [b.playerKey] : ([] as string[]),
       style: {
         width: "100%",
         height,
         fontSize: size,
-        fontFamily: "Fredoka One",
+        // The hackbox client auto-loads any `fontFamily` it finds in the pushed
+        // state from Google Fonts (see processFonts in client stateHelpers), so
+        // naming the family here is enough — "Open Sans" reads better than the
+        // display face used elsewhere.
+        fontFamily: "Open Sans",
         background: b.color,
         color: "#fff",
         border: "none",

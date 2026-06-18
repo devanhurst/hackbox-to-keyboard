@@ -8,53 +8,40 @@
   </head>
   <body>
     <main id="app">
-      <!-- ===================== Players (home) ===================== -->
+      <!-- ===================== Persistent header ===================== -->
+      <header class="appbar">
+        <h1>Hackbox&nbsp;→&nbsp;Keyboard</h1>
+        <div class="room-control">
+          <span id="status-dot" class="dot offline" title="Disconnected"></span>
+          <span id="room-code" class="room-code">————</span>
+          <button
+            id="new-room-btn"
+            class="icon-btn"
+            title="Generate a new room code"
+            aria-label="Generate a new room code"
+          >
+            ↻
+          </button>
+        </div>
+      </header>
+
+      <!-- ===================== Tabs ===================== -->
+      <nav class="tabs" role="tablist">
+        <button id="tab-players" class="tab" role="tab">Players</button>
+        <button id="tab-layouts" class="tab" role="tab">Layouts</button>
+      </nav>
+
+      <!-- ===================== Players ===================== -->
       <div id="view-players" class="view">
-        <header class="topbar">
-          <h1>Hackbox&nbsp;→&nbsp;Keyboard</h1>
-          <div class="status">
-            <span id="status-dot" class="dot offline"></span>
-            <span id="status-text">Disconnected</span>
-          </div>
-        </header>
-
-        <section class="config">
-          <div class="room">
-            <span class="room-label">Room code</span>
-            <div class="room-code-group">
-              <span id="room-code" class="room-code">————</span>
-              <button
-                id="new-room-btn"
-                class="icon-btn"
-                title="Generate a new room code"
-                aria-label="Generate a new room code"
-              >
-                ↻
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <section class="players">
-          <div class="section-head">
-            <h2>Players</h2>
-            <button id="manage-layouts-btn" class="ghost-btn">Manage layouts →</button>
-          </div>
-          <ul id="player-list"></ul>
-          <p id="empty-hint" class="hint">
-            No players yet. Share the room code to let people join. New players start with a blank
-            screen until you assign them a layout.
-          </p>
-        </section>
+        <ul id="player-list"></ul>
+        <p id="empty-hint" class="hint">
+          No players yet. Share the room code to let people join. New players start with a blank
+          screen until you assign them a layout.
+        </p>
       </div>
 
       <!-- ===================== Layouts index ===================== -->
       <div id="view-layouts" class="view" hidden>
-        <header class="topbar topbar--nav">
-          <button id="layouts-back" class="ghost-btn">← Players</button>
-          <h1>Layouts</h1>
-        </header>
-
         <div class="layout-actions">
           <button id="new-layout-btn" class="primary-btn">+ New layout</button>
           <button id="import-btn" class="ghost-btn">Import</button>
@@ -70,7 +57,7 @@
       <!-- ===================== Layout editor ===================== -->
       <div id="view-editor" class="view" hidden>
         <header class="topbar topbar--nav">
-          <button id="editor-back" class="ghost-btn">← Layouts</button>
+          <button id="editor-back" class="ghost-btn">← Back</button>
           <h1>Edit layout</h1>
         </header>
 
@@ -81,11 +68,6 @@
 
         <ul id="layout-buttons" class="layout-buttons"></ul>
         <button id="add-button-btn" class="ghost-btn">+ Add button</button>
-
-        <div class="layout-actions">
-          <button id="duplicate-layout-btn" class="ghost-btn">Duplicate</button>
-          <button id="export-btn" class="ghost-btn">Export</button>
-        </div>
       </div>
     </main>
 
@@ -99,6 +81,17 @@
         <div class="dialog-actions">
           <button value="cancel" class="ghost-btn">Cancel</button>
           <button id="import-confirm" value="import" class="primary-btn">Import</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="confirm-dialog">
+      <form method="dialog" class="dialog-body">
+        <h3 id="confirm-title">Are you sure?</h3>
+        <p id="confirm-message" class="hint"></p>
+        <div class="dialog-actions">
+          <button value="cancel" class="ghost-btn">Cancel</button>
+          <button id="confirm-ok" value="confirm" class="ghost-btn danger">Delete</button>
         </div>
       </form>
     </dialog>

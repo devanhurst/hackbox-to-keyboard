@@ -22,18 +22,20 @@ lives in a WebView, and key injection is done in Rust via
 ## How it works
 
 1. The app generates and persists a stable `hostId` (UUID).
-2. On launch it immediately creates (or reuses) a room via `POST /api/rooms`
-   against the fixed Hackbox host (`https://hackbox.ca`), then opens a raw
+2. On launch it immediately creates a fresh room via `POST /api/rooms`
+   against the fixed Hackbox host (`https://hackbox.ca`) — a new code every time
+   the app opens, never reused — then opens a raw
    WebSocket to the relay at `wss://<host>/r/<CODE>?userId=<hostId>` using
    [`partysocket`](https://www.npmjs.com/package/partysocket). The relay treats
    any connection whose `userId` equals the room's `hostId` as the host, so this
    app *is* the host. Frames are JSON envelopes `{ type, payload }`.
-3. When a player joins it pushes their saved state: the layout assigned to that
-   userId rendered as a stack of `Button` components (one per button), or a blank
-   screen if they have none. Each button's `event` is its stable id, so the host
-   can map a tap back to the right key. (The hackbox player view renders the main
-   area as a single column, so buttons stack vertically and are auto-sized to
-   share the screen.)
+3. When a player first joins the room it pushes a blank screen (any assignment
+   from a previous room is cleared on join); once the host assigns a layout it
+   pushes that layout rendered as a stack of `Button` components (one per
+   button). Each button's `event` is its stable id, so the host can map a tap
+   back to the right key. (The hackbox player view renders the main area as a
+   single column, so buttons stack vertically and are auto-sized to share the
+   screen.)
 4. When a player taps, the relay forwards a `msg` frame carrying the button's id.
    The app resolves the binding for that player+button (the per-player override
    if set, otherwise the button's default) and calls the `press_key` Rust
@@ -56,8 +58,11 @@ predictably. The data model lives in [`src/layouts.ts`](src/layouts.ts):
   reusable templates; assigning one to a player is a separate step.
 - **Per-player config** — `userId → { layoutId, overrides }`. `layoutId` is the
   layout assigned to that player (`null` = blank screen); `overrides` is
-  `buttonId → binding`, layered over each button's default. Config persists by
-  userId, so a returning player keeps their assignment.
+  `buttonId → binding`, layered over each button's default. A layout assignment
+  is *room-scoped*: every player **starts blank when they join a room** (an
+  assignment from a previous room/session never carries over), and a mid-session
+  reconnect keeps whatever the host assigned. `overrides` persist by userId, so a
+  player's per-button key tweaks survive across rooms.
 - **Export/import** — `exportLayout`/`importLayout` (de)serialize a layout as
   JSON (`{ type: "hackbox-keyboard-layout", version, layout }`), keys included.
   Per-player config is *not* exported — it's tied to specific userIds on this

@@ -15,7 +15,8 @@
         "title": "Hackbox → Keyboard",
         "width": 480,
         "height": 720,
-        "resizable": true
+        "resizable": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {

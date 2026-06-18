@@ -31,7 +31,6 @@ import {
 
 const LS = {
   hostId: "h2k.hostId",
-  roomCode: "h2k.roomCode",
 } as const;
 
 // Fixed Hackbox deployment. The HTTP API is served under /api and the realtime
@@ -69,6 +68,12 @@ let players: Players = loadPlayers();
 let socket: HackboxSocket | null = null;
 let members: Record<string, Member> = {};
 const initialized = new Set<string>(); // players we've pushed an initial state to
+// Players who have already joined the *current* room. Unlike `initialized`
+// (cleared whenever a player goes offline so we re-push on reconnect), this
+// survives reconnects and is only reset when a new room starts — so we can tell
+// a genuine first join (→ start blank) from a mid-session reconnect (→ keep the
+// host's assignment).
+const joinedThisRoom = new Set<string>();
 
 type View = "players" | "layouts" | "editor";
 let currentView: View = "players";
@@ -122,12 +127,11 @@ const el = {
   roomCode: document.getElementById("room-code") as HTMLSpanElement,
   newRoomBtn: document.getElementById("new-room-btn") as HTMLButtonElement,
   statusDot: document.getElementById("status-dot") as HTMLSpanElement,
-  statusText: document.getElementById("status-text") as HTMLSpanElement,
-  manageLayoutsBtn: document.getElementById("manage-layouts-btn") as HTMLButtonElement,
+  tabPlayers: document.getElementById("tab-players") as HTMLButtonElement,
+  tabLayouts: document.getElementById("tab-layouts") as HTMLButtonElement,
   playerList: document.getElementById("player-list") as HTMLUListElement,
   emptyHint: document.getElementById("empty-hint") as HTMLParagraphElement,
   // layouts index view
-  layoutsBack: document.getElementById("layouts-back") as HTMLButtonElement,
   newLayoutBtn: document.getElementById("new-layout-btn") as HTMLButtonElement,
   importBtn: document.getElementById("import-btn") as HTMLButtonElement,
   layoutIndex: document.getElementById("layout-index") as HTMLUListElement,
@@ -137,20 +141,48 @@ const el = {
   layoutName: document.getElementById("layout-name") as HTMLInputElement,
   layoutButtons: document.getElementById("layout-buttons") as HTMLUListElement,
   addButtonBtn: document.getElementById("add-button-btn") as HTMLButtonElement,
-  duplicateLayoutBtn: document.getElementById("duplicate-layout-btn") as HTMLButtonElement,
-  exportBtn: document.getElementById("export-btn") as HTMLButtonElement,
   // import dialog
   importDialog: document.getElementById("import-dialog") as HTMLDialogElement,
   importText: document.getElementById("import-text") as HTMLTextAreaElement,
   importFile: document.getElementById("import-file") as HTMLInputElement,
   importError: document.getElementById("import-error") as HTMLParagraphElement,
   importConfirm: document.getElementById("import-confirm") as HTMLButtonElement,
+  // confirm dialog
+  confirmDialog: document.getElementById("confirm-dialog") as HTMLDialogElement,
+  confirmTitle: document.getElementById("confirm-title") as HTMLHeadingElement,
+  confirmMessage: document.getElementById("confirm-message") as HTMLParagraphElement,
+  confirmOk: document.getElementById("confirm-ok") as HTMLButtonElement,
   toast: document.getElementById("toast") as HTMLDivElement,
 };
 
+// Promise-based confirmation built on a native <dialog> — Tauri's WebView
+// doesn't implement the synchronous window.confirm(), so it always returned
+// false and (e.g.) Delete silently did nothing. The <form method="dialog">
+// sets returnValue to the clicked button's value; Esc closes with "".
+function confirmDialog(opts: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+}): Promise<boolean> {
+  el.confirmTitle.textContent = opts.title;
+  el.confirmMessage.textContent = opts.message;
+  el.confirmOk.textContent = opts.confirmLabel;
+  el.confirmDialog.showModal();
+  return new Promise((resolve) => {
+    el.confirmDialog.addEventListener(
+      "close",
+      () => resolve(el.confirmDialog.returnValue === "confirm"),
+      { once: true },
+    );
+  });
+}
+
+// The dot's colour conveys the connection state at a glance; the full message
+// (room code, errors, reconnecting) lives in its tooltip since the persistent
+// status text was dropped in favour of the Manage layouts button.
 function setStatus(state: "online" | "offline" | "connecting", text: string) {
   el.statusDot.className = `dot ${state}`;
-  el.statusText.textContent = text;
+  el.statusDot.title = text;
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -172,6 +204,13 @@ function showView(view: View) {
   el.viewPlayers.hidden = view !== "players";
   el.viewLayouts.hidden = view !== "layouts";
   el.viewEditor.hidden = view !== "editor";
+
+  // The editor is a drill-down within the Layouts tab, so it keeps that tab lit.
+  const layoutsActive = view === "layouts" || view === "editor";
+  el.tabPlayers.classList.toggle("active", view === "players");
+  el.tabLayouts.classList.toggle("active", layoutsActive);
+  el.tabPlayers.setAttribute("aria-selected", String(view === "players"));
+  el.tabLayouts.setAttribute("aria-selected", String(layoutsActive));
 
   if (view === "players") renderPlayers();
   if (view === "layouts") renderLayoutIndex();
@@ -252,7 +291,9 @@ function renderLayoutIndexRow(layout: Layout): HTMLLIElement {
   const li = document.createElement("li");
   li.className = "layout-index-row";
   li.dataset.id = layout.id;
-  li.draggable = true;
+  // Not draggable by default — only a press on the grip arms it (see
+  // wireRowDrag). Otherwise the whole row drags from anywhere and, worse, a
+  // mousedown on Edit/Delete starts a drag instead of firing the click.
 
   const grip = document.createElement("span");
   grip.className = "grip";
@@ -267,26 +308,58 @@ function renderLayoutIndexRow(layout: Layout): HTMLLIElement {
     <span class="layout-sub">${n} button${n === 1 ? "" : "s"}</span>
   `;
 
-  const edit = document.createElement("button");
-  edit.className = "ghost-btn";
-  edit.textContent = "Edit";
+  // Per-layout actions, as icon buttons. All layout management lives here on the
+  // index — the editor itself has no duplicate/export/delete controls.
+  const edit = iconButton("✎", "Edit layout");
   edit.addEventListener("click", () => openEditor(layout.id));
 
-  const del = document.createElement("button");
-  del.className = "ghost-btn danger";
-  del.textContent = "Delete";
-  del.addEventListener("click", () => deleteLayout(layout.id));
+  const dup = iconButton("⧉", "Duplicate layout");
+  dup.addEventListener("click", () => duplicateLayoutById(layout.id));
 
-  li.append(grip, meta, edit, del);
-  wireRowDrag(li);
+  const exp = iconButton("⤓", "Export layout (copy & download JSON)");
+  exp.addEventListener("click", () => void exportLayoutFile(layout));
+
+  const del = iconButton("×", "Delete layout", true);
+  del.addEventListener("click", () => void deleteLayout(layout.id));
+
+  const actions = document.createElement("div");
+  actions.className = "row-actions";
+  actions.append(edit, dup, exp, del);
+
+  li.append(grip, meta, actions);
+  wireRowDrag(li, grip);
   return li;
+}
+
+// A square icon button (monochrome glyph) with an accessible label/tooltip.
+function iconButton(glyph: string, label: string, danger = false): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.className = "icon-btn" + (danger ? " danger" : "");
+  b.textContent = glyph;
+  b.title = label;
+  b.setAttribute("aria-label", label);
+  return b;
 }
 
 // --- drag reordering ------------------------------------------------------
 
 // Standard HTML5 drag-and-drop reorder: the dragged row moves live in the DOM
 // during dragover; on drop we rebuild the `layouts` array from the DOM order.
-function wireRowDrag(li: HTMLLIElement) {
+//
+// The row is only `draggable` while the pointer is pressed on the grip handle,
+// so a drag can only start from the handle and clicks on the row's own buttons
+// (Edit/Delete) aren't swallowed by an accidental drag.
+function wireRowDrag(li: HTMLLIElement, grip: HTMLElement) {
+  const disarm = () => {
+    li.draggable = false;
+  };
+  grip.addEventListener("mousedown", () => {
+    li.draggable = true;
+  });
+  // A press that doesn't turn into a drag (a plain click on the grip) must
+  // still disarm so the row can't be dragged from elsewhere afterwards.
+  grip.addEventListener("mouseup", disarm);
+
   li.addEventListener("dragstart", (e) => {
     li.classList.add("dragging");
     e.dataTransfer?.setData("text/plain", li.dataset.id || "");
@@ -294,18 +367,28 @@ function wireRowDrag(li: HTMLLIElement) {
   });
   li.addEventListener("dragend", () => {
     li.classList.remove("dragging");
+    disarm();
     commitIndexOrder();
   });
 }
 
 el.layoutIndex.addEventListener("dragover", (e) => {
   e.preventDefault();
+  // WebKit (the Tauri macOS WebView) only treats a target as a valid drop zone
+  // when dropEffect is set to match the drag's effectAllowed ("move"); without
+  // this it shows the no-drop cursor and rejects every position.
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
   const dragging = el.layoutIndex.querySelector(".dragging") as HTMLElement | null;
   if (!dragging) return;
   const after = dragAfterElement(el.layoutIndex, e.clientY);
   if (after == null) el.layoutIndex.appendChild(dragging);
   else el.layoutIndex.insertBefore(dragging, after);
 });
+
+// Accept the drop so the row settles in place (and WebKit fires `dragend`
+// normally) rather than animating back to its origin. Order is committed on
+// `dragend`, which fires after this.
+el.layoutIndex.addEventListener("drop", (e) => e.preventDefault());
 
 function dragAfterElement(container: HTMLElement, y: number): HTMLElement | null {
   const rows = [...container.querySelectorAll<HTMLElement>(".layout-index-row:not(.dragging)")];
@@ -536,6 +619,7 @@ function renderPlayerBinding(member: Member, button: ButtonDef): HTMLDivElement 
     capture.buttonId === button.id;
 
   const keyBtn = document.createElement("button");
+  keyBtn.dataset.buttonId = button.id; // so a tap can flash this exact control
   keyBtn.className =
     "bind-btn" +
     (isCapturing ? " capturing" : "") +
@@ -580,6 +664,19 @@ function flashPlayer(userId: string) {
   li.classList.remove("hit");
   void (li as HTMLElement).offsetWidth; // restart the CSS animation
   li.classList.add("hit");
+}
+
+// Pulse the specific button's key control on the player's card, so the host can
+// see *which* button was tapped (not just which player). No-ops if that card
+// isn't currently in the DOM (e.g. the host is on the Layouts tab).
+function flashButton(userId: string, buttonId: string) {
+  const btn = el.playerList.querySelector<HTMLElement>(
+    `li[data-id="${CSS.escape(userId)}"] .bind-btn[data-button-id="${CSS.escape(buttonId)}"]`,
+  );
+  if (!btn) return;
+  btn.classList.remove("hit");
+  void btn.offsetWidth; // restart the CSS animation
+  btn.classList.add("hit");
 }
 
 // ---------------------------------------------------------------------------
@@ -643,22 +740,27 @@ function createLayout() {
   el.layoutName.select();
 }
 
-function duplicateCurrentLayout() {
-  const source = editingLayout();
-  if (!source) return;
+function duplicateLayoutById(id: string) {
+  const idx = layouts.findIndex((l) => l.id === id);
+  if (idx === -1) return;
+  const source = layouts[idx];
   const copy = duplicateLayout(source, `${source.name} copy`);
-  layouts.push(copy);
+  // Drop the copy right after its original so it's easy to find in the list.
+  layouts.splice(idx + 1, 0, copy);
   persistLayouts();
-  openEditor(copy.id);
-  el.layoutName.focus();
-  el.layoutName.select();
+  renderLayoutIndex();
   toast(`Duplicated "${source.name}"`);
 }
 
-function deleteLayout(id: string) {
+async function deleteLayout(id: string) {
   const removed = layouts.find((l) => l.id === id);
   if (!removed) return;
-  if (!confirm(`Delete layout "${removed.name}"?`)) return;
+  const ok = await confirmDialog({
+    title: "Delete layout",
+    message: `Delete "${removed.name}"? This can't be undone.`,
+    confirmLabel: "Delete",
+  });
+  if (!ok) return;
 
   layouts = layouts.filter((l) => l.id !== id);
   persistLayouts();
@@ -767,21 +869,11 @@ async function pressKey(b: Binding) {
 // Room lifecycle
 // ---------------------------------------------------------------------------
 
-// `apiBase` is the HTTP front door, e.g. "https://app.hackbox.ca/api".
-async function ensureRoom(apiBase: string): Promise<string> {
-  const existing = localStorage.getItem(LS.roomCode);
-  if (existing) {
-    try {
-      const res = await fetch(
-        `${apiBase}/rooms/${existing}?userId=${encodeURIComponent(hostId)}`,
-      );
-      const data = await res.json();
-      if (data.exists) return existing;
-    } catch {
-      /* fall through to create */
-    }
-  }
-
+// Allocate a brand-new room owned by this host. We deliberately create a fresh
+// code on every launch rather than reusing a stored one, so the room never
+// outlives the app session. `apiBase` is the HTTP front door, e.g.
+// "https://app.hackbox.ca/api".
+async function createRoom(apiBase: string): Promise<string> {
   const res = await fetch(`${apiBase}/rooms`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -791,13 +883,12 @@ async function ensureRoom(apiBase: string): Promise<string> {
   if (!data.ok || !data.roomCode) {
     throw new Error(data.error || "Failed to create room");
   }
-  localStorage.setItem(LS.roomCode, data.roomCode);
   return data.roomCode;
 }
 
 // Push a player's current state: their assigned layout, or a blank screen if
-// they have none. Re-pushing a layout also resets each button's "submitted"
-// lock so presses are repeatable.
+// they have none. Buttons are pushed `persistent`, so this is only needed when
+// the player's layout actually changes — not to re-arm after each tap.
 function pushToPlayer(userId: string) {
   if (!socket) return;
   const name = members[userId]?.name || "";
@@ -840,8 +931,7 @@ function scheduleRecreate() {
   if (recreateTimer !== null) return;
   recreateTimer = setTimeout(() => {
     recreateTimer = null;
-    localStorage.removeItem(LS.roomCode); // force a fresh room
-    void connect();
+    void connect(); // connect() always allocates a fresh room
   }, 3000);
 }
 
@@ -855,7 +945,7 @@ async function connect() {
 
   let roomCode: string;
   try {
-    roomCode = await ensureRoom(API_BASE);
+    roomCode = await createRoom(API_BASE);
   } catch (err) {
     setStatus("offline", `Room error: ${(err as Error).message}`);
     scheduleRecreate(); // retry shortly; no manual reconnect button
@@ -863,6 +953,11 @@ async function connect() {
   }
 
   el.roomCode.textContent = roomCode;
+
+  // A brand-new room: every player that joins it counts as a fresh join, so
+  // they all start blank regardless of earlier assignments.
+  joinedThisRoom.clear();
+  initialized.clear();
 
   socket?.close();
   socket = createHackboxSocket({
@@ -897,12 +992,25 @@ async function connect() {
   socket.on("state.host", (payload) => {
     members = (payload as { members?: Record<string, Member> }).members || {};
     for (const m of Object.values(members)) {
-      if (m.online && !initialized.has(m.id)) {
-        initialized.add(m.id);
-        // Push their saved assignment (blank if none / first time).
-        pushToPlayer(m.id);
+      if (m.online) {
+        // First time we see this player in this room: clear any layout they
+        // carried over from a previous room/session — players always start
+        // blank on join. (A reconnect keeps whatever the host assigned since.)
+        if (!joinedThisRoom.has(m.id)) {
+          joinedThisRoom.add(m.id);
+          const config = players[m.id];
+          if (config && config.layoutId !== null) {
+            config.layoutId = null;
+            savePlayers(players);
+          }
+        }
+        if (!initialized.has(m.id)) {
+          initialized.add(m.id);
+          pushToPlayer(m.id);
+        }
+      } else {
+        initialized.delete(m.id);
       }
-      if (!m.online) initialized.delete(m.id);
     }
     if (currentView === "players") renderPlayers();
   });
@@ -917,19 +1025,18 @@ async function connect() {
     if (button) {
       const binding = effectiveBinding(from, button);
       if (binding) void pressKey(binding);
-      // Re-arm the player's buttons (clears the tapped button's submitted lock).
-      pushToPlayer(from);
+      // No re-push needed: the buttons are pushed `persistent`, so they stay
+      // armed for repeated taps (see layoutState).
+      flashButton(from, button.id);
     }
     flashPlayer(from);
   });
 }
 
-// Discard the current room and spin up a fresh one. The room is reused across
-// relaunches (ensureRoom reuses the stored code), so this is the only way to
-// rotate the code on demand. Existing players will need the new code to rejoin.
+// Discard the current room and spin up a fresh one on demand. (A fresh room is
+// also allocated on every launch.) Existing players need the new code to rejoin.
 async function newRoom() {
   el.newRoomBtn.disabled = true;
-  localStorage.removeItem(LS.roomCode); // force ensureRoom to allocate a fresh code
   members = {};
   initialized.clear();
   el.roomCode.textContent = "————";
@@ -942,9 +1049,7 @@ async function newRoom() {
 // Export / import
 // ---------------------------------------------------------------------------
 
-async function doExport() {
-  const layout = editingLayout();
-  if (!layout) return;
+async function exportLayoutFile(layout: Layout) {
   const json = exportLayout(layout);
 
   // Offer a file download…
@@ -991,12 +1096,12 @@ function applyImport(json: string): boolean {
 // Wire up DOM events
 // ---------------------------------------------------------------------------
 
-// players view
+// persistent header + tabs
 el.newRoomBtn.addEventListener("click", () => void newRoom());
-el.manageLayoutsBtn.addEventListener("click", () => showView("layouts"));
+el.tabPlayers.addEventListener("click", () => showView("players"));
+el.tabLayouts.addEventListener("click", () => showView("layouts"));
 
 // layouts index view
-el.layoutsBack.addEventListener("click", () => showView("players"));
 el.newLayoutBtn.addEventListener("click", () => createLayout());
 el.importBtn.addEventListener("click", () => openImport());
 
@@ -1010,8 +1115,6 @@ el.layoutName.addEventListener("input", () => {
   }
 });
 el.addButtonBtn.addEventListener("click", () => addButton());
-el.duplicateLayoutBtn.addEventListener("click", () => duplicateCurrentLayout());
-el.exportBtn.addEventListener("click", () => void doExport());
 
 // import dialog
 el.importFile.addEventListener("change", async () => {
