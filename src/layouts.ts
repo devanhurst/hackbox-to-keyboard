@@ -30,7 +30,12 @@ export interface ButtonDef {
   id: string; // stable id within the layout; used as the button's event name
   label: string; // text shown on the player's button
   color: string; // button background colour
-  binding: Binding | null; // default key (may be overridden per-player)
+  binding: Binding | null; // default host key injected on tap (overridable per-player)
+  // Key the PLAYER presses on their own device to trigger this button, as a
+  // KeyboardEvent.key value (e.g. " " for space). Shared by all players on the
+  // layout. null = tap only. Distinct from `binding`, the key pressed on the
+  // host machine.
+  playerKey: string | null;
 }
 
 export interface Layout {
@@ -63,7 +68,7 @@ const DEFAULT_COLOR = "#7c5cff";
 const uid = () => crypto.randomUUID();
 
 export function newButton(label = "Button", color = DEFAULT_COLOR): ButtonDef {
-  return { id: uid(), label, color, binding: null };
+  return { id: uid(), label, color, binding: null, playerKey: null };
 }
 
 // Clone a layout into an independent copy: fresh layout id and fresh button ids
@@ -78,6 +83,7 @@ export function duplicateLayout(layout: Layout, name: string): Layout {
       label: b.label,
       color: b.color,
       binding: b.binding ? { ...b.binding, modifiers: [...b.binding.modifiers] } : null,
+      playerKey: b.playerKey,
     })),
   };
 }
@@ -87,7 +93,7 @@ function defaultLayout(): Layout {
   return {
     id: uid(),
     name: "Single Button",
-    buttons: [{ id: "press", label: "PRESS", color: DEFAULT_COLOR, binding: null }],
+    buttons: [{ id: "press", label: "PRESS", color: DEFAULT_COLOR, binding: null, playerKey: null }],
   };
 }
 
@@ -113,6 +119,7 @@ function coerceButton(v: unknown): ButtonDef | null {
     label: typeof b.label === "string" ? b.label : "Button",
     color: typeof b.color === "string" && b.color ? b.color : DEFAULT_COLOR,
     binding: coerceBinding(b.binding),
+    playerKey: typeof b.playerKey === "string" && b.playerKey ? b.playerKey : null,
   };
 }
 

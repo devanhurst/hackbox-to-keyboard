@@ -76,8 +76,9 @@ let currentView: View = "players";
 // What a key capture, if any, is targeting: a button's default key (in the
 // layout editor), or a specific player's override of a button.
 type CaptureTarget =
-  | { kind: "default"; buttonId: string }
-  | { kind: "player"; userId: string; buttonId: string };
+  | { kind: "default"; buttonId: string } // a button's default host key (editor)
+  | { kind: "playerKey"; buttonId: string } // the key a player presses on their device
+  | { kind: "player"; userId: string; buttonId: string }; // a per-player host-key override
 let capture: CaptureTarget | null = null;
 
 // The layout currently open in the editor (null if none / deleted).
@@ -215,6 +216,20 @@ function bindingLabel(b: Binding): string {
   return [...b.modifiers.map((m) => MOD_LABEL[m]), keyLabel(b.code)].join("+");
 }
 
+// Friendly label for a player key (a KeyboardEvent.key value, e.g. " " or "a").
+function playerKeyLabel(key: string): string {
+  if (key === " ") return "Space";
+  const map: Record<string, string> = {
+    ArrowUp: "Up",
+    ArrowDown: "Down",
+    ArrowLeft: "Left",
+    ArrowRight: "Right",
+    Escape: "Esc",
+  };
+  if (map[key]) return map[key];
+  return key.length === 1 ? key.toUpperCase() : key;
+}
+
 function escapeHtml(s: string): string {
   const div = document.createElement("div");
   div.textContent = s;
@@ -345,6 +360,10 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
   const li = document.createElement("li");
   li.className = "layout-button-row";
 
+  // Top line: colour, label, delete.
+  const top = document.createElement("div");
+  top.className = "lbr-top";
+
   const color = document.createElement("input");
   color.type = "color";
   color.className = "color-input";
@@ -367,20 +386,6 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
     scheduleRepushLayout(layout.id);
   });
 
-  const isCapturing = capture?.kind === "default" && capture.buttonId === button.id;
-  const keyBtn = document.createElement("button");
-  keyBtn.className = `key-btn${isCapturing ? " capturing" : ""}${button.binding ? "" : " unset"}`;
-  keyBtn.textContent = isCapturing
-    ? "Press keys…"
-    : button.binding
-      ? bindingLabel(button.binding)
-      : "Default key";
-  keyBtn.title = "Default key (used unless a player overrides it)";
-  keyBtn.addEventListener("click", () => {
-    capture = isCapturing ? null : { kind: "default", buttonId: button.id };
-    renderEditor();
-  });
-
   const del = document.createElement("button");
   del.className = "icon-btn danger";
   del.textContent = "×";
@@ -388,7 +393,69 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
   del.setAttribute("aria-label", "Remove button");
   del.addEventListener("click", () => removeButton(layout, button.id));
 
-  li.append(color, label, keyBtn, del);
+  top.append(color, label, del);
+
+  // Keys line: the key the player presses on their device, and the default key
+  // pressed on this computer.
+  const keys = document.createElement("div");
+  keys.className = "lbr-keys";
+
+  // Player key.
+  const playerCapturing =
+    capture?.kind === "playerKey" && capture.buttonId === button.id;
+  const playerField = document.createElement("div");
+  playerField.className = "lbr-key";
+  const playerLbl = document.createElement("span");
+  playerLbl.className = "lbr-key-label";
+  playerLbl.textContent = "Player presses";
+  const playerBtn = document.createElement("button");
+  playerBtn.className =
+    `key-btn${playerCapturing ? " capturing" : ""}${button.playerKey ? "" : " unset"}`;
+  playerBtn.textContent = playerCapturing
+    ? "Press a key…"
+    : button.playerKey
+      ? playerKeyLabel(button.playerKey)
+      : "Tap only";
+  playerBtn.title = "Key the player presses on their OWN device to fire this button";
+  playerBtn.addEventListener("click", () => {
+    capture = playerCapturing ? null : { kind: "playerKey", buttonId: button.id };
+    renderEditor();
+  });
+  playerField.append(playerLbl, playerBtn);
+  if (button.playerKey) {
+    const clear = document.createElement("button");
+    clear.className = "reset-btn";
+    clear.textContent = "×";
+    clear.title = "Remove player key (tap only)";
+    clear.setAttribute("aria-label", "Remove player key");
+    clear.addEventListener("click", () => setPlayerKey(layout, button, null));
+    playerField.append(clear);
+  }
+
+  // Default host key.
+  const hostCapturing = capture?.kind === "default" && capture.buttonId === button.id;
+  const hostField = document.createElement("div");
+  hostField.className = "lbr-key";
+  const hostLbl = document.createElement("span");
+  hostLbl.className = "lbr-key-label";
+  hostLbl.textContent = "Sends (default)";
+  const hostBtn = document.createElement("button");
+  hostBtn.className = `key-btn${hostCapturing ? " capturing" : ""}${button.binding ? "" : " unset"}`;
+  hostBtn.textContent = hostCapturing
+    ? "Press keys…"
+    : button.binding
+      ? bindingLabel(button.binding)
+      : "Default key";
+  hostBtn.title = "Key pressed on THIS computer (a player can override it)";
+  hostBtn.addEventListener("click", () => {
+    capture = hostCapturing ? null : { kind: "default", buttonId: button.id };
+    renderEditor();
+  });
+  hostField.append(hostLbl, hostBtn);
+
+  keys.append(playerField, hostField);
+
+  li.append(top, keys);
   return li;
 }
 
@@ -538,6 +605,15 @@ function removeButton(layout: Layout, buttonId: string) {
   void pushLayoutToAssigned(layout.id);
 }
 
+// Set (or clear) the key a player presses on their own device for a button.
+// Changing it alters the pushed `keys`, so re-push to assigned players.
+function setPlayerKey(layout: Layout, button: ButtonDef, key: string | null) {
+  button.playerKey = key;
+  persistLayouts();
+  renderEditor();
+  void pushLayoutToAssigned(layout.id);
+}
+
 function clearOverride(userId: string, buttonId: string) {
   const config = players[userId];
   if (!config) return;
@@ -629,6 +705,21 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (MODIFIER_CODES.has(e.code)) return; // hold for the main key
+
+  // Player key: store the produced KeyboardEvent.key (what the hackbox client
+  // matches against), with no modifiers — ChoiceButton ignores them.
+  if (capture.kind === "playerKey") {
+    const layout = editingLayout();
+    const button = layout?.buttons.find((b) => b.id === capture!.buttonId);
+    if (layout && button) {
+      capture = null;
+      setPlayerKey(layout, button, e.key);
+      return;
+    }
+    capture = null;
+    rerenderCaptureView();
+    return;
+  }
 
   const modifiers: Modifier[] = [];
   if (e.ctrlKey) modifiers.push("Control");

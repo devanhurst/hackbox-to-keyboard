@@ -49,7 +49,8 @@ export function layoutState(headerText: string, layout: Layout) {
       event: b.id,
       value: b.id,
       label: b.label,
-      keys: [] as string[],
+      // Key(s) the player can press on their own device to fire this button.
+      keys: b.playerKey ? [b.playerKey] : ([] as string[]),
       style: {
         width: "100%",
         height,

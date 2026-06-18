@@ -11,8 +11,9 @@ the host gives them one, and different players can be on different layouts. For 
 game like "Duel" you might make two six-button layouts ("Duel P1" / "Duel P2",
 each with four answers, accelerate, lock-in) whose keys differ, and assign one to
 each player. A layout's keys are its **defaults**; any player's button can also be
-**overridden** individually. Save as many layouts as you like and
-**export/import** them as JSON to share with friends.
+**overridden** individually. Buttons can also be wired to a key on the player's
+*own* keyboard (e.g. Space for a buzzer) so they don't have to tap. Save as many
+layouts as you like and **export/import** them as JSON to share with friends.
 
 This is the cross-platform answer to the Windows-only Unity version: the web UI
 lives in a WebView, and key injection is done in Rust via
@@ -49,7 +50,9 @@ Layouts and per-player config are stored in `localStorage`. Bindings are keyed b
 predictably. The data model lives in [`src/layouts.ts`](src/layouts.ts):
 
 - **Layouts** — a named list of buttons (`{ id, name, buttons }`). Each button has
-  a `label`, `color`, and an optional **default** `binding`. Layouts are purely
+  a `label`, `color`, an optional **default** `binding` (the host key), and an
+  optional `playerKey` (a `KeyboardEvent.key` the player can press on their own
+  device, sent through as the hackbox Button's `keys` prop). Layouts are purely
   reusable templates; assigning one to a player is a separate step.
 - **Per-player config** — `userId → { layoutId, overrides }`. `layoutId` is the
   layout assigned to that player (`null` = blank screen); `overrides` is
@@ -80,9 +83,16 @@ shared layout. Each row has **Edit** and **Delete**, and a **⠿** drag handle t
 reorder — the order here is the order players see in their layout dropdown.
 
 **Edit a layout.** In the editor, set the name and add buttons with **+ Add
-button**. For each button set its label, colour, and a **Default key** (the key
-it fires unless a player overrides it). **Duplicate** clones the layout (fresh
-button ids) — the quick way to build a variant like "Duel P2" from "Duel P1".
+button**. Each button has a label, colour, and two keys:
+
+- **Player presses** — an optional key the player can hit on their *own*
+  keyboard to fire the button instead of tapping (e.g. Space for a buzzer).
+  Shared by everyone on the layout; leave it as "Tap only" to disable.
+- **Sends (default)** — the key pressed on *this* computer when the button
+  fires, unless a player overrides it.
+
+**Duplicate** clones the layout (fresh button ids) — the quick way to build a
+variant like "Duel P2" from "Duel P1".
 
 **Assign per player.** Under **Players**, each player has a **layout dropdown**.
 New players start on **No layout** (a blank screen) until you pick one — and you
