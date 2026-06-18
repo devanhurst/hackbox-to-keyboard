@@ -8,46 +8,71 @@
   </head>
   <body>
     <main id="app">
-      <header class="topbar">
-        <h1>Hackbox&nbsp;→&nbsp;Keyboard</h1>
-        <div class="status">
-          <span id="status-dot" class="dot offline"></span>
-          <span id="status-text">Disconnected</span>
-        </div>
-      </header>
-
-      <section class="config">
-        <div class="room">
-          <span class="room-label">Room code</span>
-          <div class="room-code-group">
-            <span id="room-code" class="room-code">————</span>
-            <button
-              id="new-room-btn"
-              class="icon-btn"
-              title="Generate a new room code"
-              aria-label="Generate a new room code"
-            >
-              ↻
-            </button>
+      <!-- ===================== Players (home) ===================== -->
+      <div id="view-players" class="view">
+        <header class="topbar">
+          <h1>Hackbox&nbsp;→&nbsp;Keyboard</h1>
+          <div class="status">
+            <span id="status-dot" class="dot offline"></span>
+            <span id="status-text">Disconnected</span>
           </div>
-        </div>
-      </section>
+        </header>
 
-      <section class="layout">
-        <div class="section-head">
-          <h2>Layouts</h2>
-          <div class="layout-picker">
-            <select id="layout-select" aria-label="Layout being edited"></select>
-            <button id="new-layout-btn" class="icon-btn" title="New layout" aria-label="New layout">
-              +
-            </button>
+        <section class="config">
+          <div class="room">
+            <span class="room-label">Room code</span>
+            <div class="room-code-group">
+              <span id="room-code" class="room-code">————</span>
+              <button
+                id="new-room-btn"
+                class="icon-btn"
+                title="Generate a new room code"
+                aria-label="Generate a new room code"
+              >
+                ↻
+              </button>
+            </div>
           </div>
+        </section>
+
+        <section class="players">
+          <div class="section-head">
+            <h2>Players</h2>
+            <button id="manage-layouts-btn" class="ghost-btn">Manage layouts →</button>
+          </div>
+          <ul id="player-list"></ul>
+          <p id="empty-hint" class="hint">
+            No players yet. Share the room code to let people join. New players start with a blank
+            screen until you assign them a layout.
+          </p>
+        </section>
+      </div>
+
+      <!-- ===================== Layouts index ===================== -->
+      <div id="view-layouts" class="view" hidden>
+        <header class="topbar topbar--nav">
+          <button id="layouts-back" class="ghost-btn">← Players</button>
+          <h1>Layouts</h1>
+        </header>
+
+        <div class="layout-actions">
+          <button id="new-layout-btn" class="primary-btn">+ New layout</button>
+          <button id="import-btn" class="ghost-btn">Import</button>
         </div>
 
-        <p class="hint">
-          Design reusable button layouts here, then assign one to each player below. Keys set
-          here are the layout's defaults — a player can override any of them individually.
+        <ul id="layout-index" class="layout-index"></ul>
+        <p id="layouts-empty-hint" class="hint">
+          No layouts yet. Create one or import a layout a friend shared with you.
         </p>
+        <p class="hint">Drag the <span class="grip-inline">⠿</span> handle to reorder — this is the order players see in their layout dropdown.</p>
+      </div>
+
+      <!-- ===================== Layout editor ===================== -->
+      <div id="view-editor" class="view" hidden>
+        <header class="topbar topbar--nav">
+          <button id="editor-back" class="ghost-btn">← Layouts</button>
+          <h1>Edit layout</h1>
+        </header>
 
         <label class="field">
           <span class="field-label">Name</span>
@@ -60,19 +85,8 @@
         <div class="layout-actions">
           <button id="duplicate-layout-btn" class="ghost-btn">Duplicate</button>
           <button id="export-btn" class="ghost-btn">Export</button>
-          <button id="import-btn" class="ghost-btn">Import</button>
-          <button id="delete-layout-btn" class="ghost-btn danger">Delete layout</button>
         </div>
-      </section>
-
-      <section class="players">
-        <h2>Players</h2>
-        <ul id="player-list"></ul>
-        <p id="empty-hint" class="hint">
-          No players yet. Share the room code to let people join. New players start with a blank
-          screen until you assign them a layout.
-        </p>
-      </section>
+      </div>
     </main>
 
     <dialog id="import-dialog">

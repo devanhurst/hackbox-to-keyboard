@@ -38,6 +38,13 @@ body {
   margin: 0;
 }
 
+/* Nav headers (Layouts / Editor): back button + title grouped on the left. */
+.topbar--nav {
+  justify-content: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
 .status {
   display: flex;
   align-items: center;
@@ -283,7 +290,65 @@ textarea:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin-top: 0.25rem;
+  margin-top: 1rem;
+}
+
+/* --- Layouts index ------------------------------------------------------ */
+
+.layout-index {
+  list-style: none;
+  margin: 1rem 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.layout-index-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--panel);
+  border: 1px solid transparent;
+  border-radius: 0.6rem;
+  padding: 0.6rem 0.7rem;
+}
+.layout-index-row.dragging {
+  opacity: 0.5;
+  border-color: var(--accent);
+}
+
+.grip {
+  cursor: grab;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  user-select: none;
+  flex: none;
+}
+.grip:active {
+  cursor: grabbing;
+}
+.grip-inline {
+  color: var(--muted);
+}
+
+.layout-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.layout-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.layout-sub {
+  font-size: 0.78rem;
+  color: var(--muted);
 }
 
 /* --- Players ------------------------------------------------------------ */

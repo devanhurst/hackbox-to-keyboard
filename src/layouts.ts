@@ -132,20 +132,20 @@ function coerceLayout(v: unknown): Layout | null {
 // --- persistence ----------------------------------------------------------
 
 export function loadLayouts(): Layout[] {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(localStorage.getItem(LS.layouts) || "null");
-  } catch {
-    raw = null;
+  const stored = localStorage.getItem(LS.layouts);
+  if (stored !== null) {
+    // The key exists — respect whatever's there, including an empty list (the
+    // user may have deleted every layout).
+    try {
+      const raw = JSON.parse(stored);
+      if (Array.isArray(raw)) return raw.map(coerceLayout).filter(Boolean) as Layout[];
+    } catch {
+      /* corrupt — fall through to seed */
+    }
   }
 
-  if (Array.isArray(raw) && raw.length) {
-    const layouts = raw.map(coerceLayout).filter(Boolean) as Layout[];
-    if (layouts.length) return layouts;
-  }
-
-  // First run (or corrupt store): seed a starter layout and migrate any legacy
-  // single-button bindings into per-player config assigned to it.
+  // First run: seed a starter layout and migrate any legacy single-button
+  // bindings into per-player config assigned to it.
   const layout = defaultLayout();
   migrateLegacyBindings(layout.id, layout.buttons[0].id);
   saveLayouts([layout]);

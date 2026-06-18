@@ -63,12 +63,15 @@ interface Member {
 }
 
 let layouts: Layout[] = loadLayouts();
-let editingLayoutId: string = resolveEditingLayoutId();
+let editingLayoutId: string | null = getEditingLayoutId();
 let players: Players = loadPlayers();
 
 let socket: HackboxSocket | null = null;
 let members: Record<string, Member> = {};
 const initialized = new Set<string>(); // players we've pushed an initial state to
+
+type View = "players" | "layouts" | "editor";
+let currentView: View = "players";
 
 // What a key capture, if any, is targeting: a button's default key (in the
 // layout editor), or a specific player's override of a button.
@@ -77,17 +80,9 @@ type CaptureTarget =
   | { kind: "player"; userId: string; buttonId: string };
 let capture: CaptureTarget | null = null;
 
-function resolveEditingLayoutId(): string {
-  const stored = getEditingLayoutId();
-  if (stored && layouts.some((l) => l.id === stored)) return stored;
-  const id = layouts[0].id;
-  setEditingLayoutId(id);
-  return id;
-}
-
-// The layout currently shown in the editor panel.
-function editingLayout(): Layout {
-  return layouts.find((l) => l.id === editingLayoutId) ?? layouts[0];
+// The layout currently open in the editor (null if none / deleted).
+function editingLayout(): Layout | undefined {
+  return editingLayoutId ? layouts.find((l) => l.id === editingLayoutId) : undefined;
 }
 
 function layoutById(id: string | null | undefined): Layout | undefined {
@@ -118,21 +113,32 @@ function effectiveBinding(userId: string, button: ButtonDef): Binding | null {
 // ---------------------------------------------------------------------------
 
 const el = {
+  // views
+  viewPlayers: document.getElementById("view-players") as HTMLDivElement,
+  viewLayouts: document.getElementById("view-layouts") as HTMLDivElement,
+  viewEditor: document.getElementById("view-editor") as HTMLDivElement,
+  // players view
   roomCode: document.getElementById("room-code") as HTMLSpanElement,
   newRoomBtn: document.getElementById("new-room-btn") as HTMLButtonElement,
   statusDot: document.getElementById("status-dot") as HTMLSpanElement,
   statusText: document.getElementById("status-text") as HTMLSpanElement,
-  layoutSelect: document.getElementById("layout-select") as HTMLSelectElement,
+  manageLayoutsBtn: document.getElementById("manage-layouts-btn") as HTMLButtonElement,
+  playerList: document.getElementById("player-list") as HTMLUListElement,
+  emptyHint: document.getElementById("empty-hint") as HTMLParagraphElement,
+  // layouts index view
+  layoutsBack: document.getElementById("layouts-back") as HTMLButtonElement,
   newLayoutBtn: document.getElementById("new-layout-btn") as HTMLButtonElement,
+  importBtn: document.getElementById("import-btn") as HTMLButtonElement,
+  layoutIndex: document.getElementById("layout-index") as HTMLUListElement,
+  layoutsEmptyHint: document.getElementById("layouts-empty-hint") as HTMLParagraphElement,
+  // editor view
+  editorBack: document.getElementById("editor-back") as HTMLButtonElement,
   layoutName: document.getElementById("layout-name") as HTMLInputElement,
   layoutButtons: document.getElementById("layout-buttons") as HTMLUListElement,
   addButtonBtn: document.getElementById("add-button-btn") as HTMLButtonElement,
   duplicateLayoutBtn: document.getElementById("duplicate-layout-btn") as HTMLButtonElement,
   exportBtn: document.getElementById("export-btn") as HTMLButtonElement,
-  importBtn: document.getElementById("import-btn") as HTMLButtonElement,
-  deleteLayoutBtn: document.getElementById("delete-layout-btn") as HTMLButtonElement,
-  playerList: document.getElementById("player-list") as HTMLUListElement,
-  emptyHint: document.getElementById("empty-hint") as HTMLParagraphElement,
+  // import dialog
   importDialog: document.getElementById("import-dialog") as HTMLDialogElement,
   importText: document.getElementById("import-text") as HTMLTextAreaElement,
   importFile: document.getElementById("import-file") as HTMLInputElement,
@@ -152,6 +158,29 @@ function toast(message: string) {
   el.toast.classList.add("show");
   if (toastTimer !== null) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.toast.classList.remove("show"), 2200);
+}
+
+// ---------------------------------------------------------------------------
+// View switching
+// ---------------------------------------------------------------------------
+
+function showView(view: View) {
+  // Leaving the editor or a list cancels any in-progress key capture.
+  if (view !== currentView) capture = null;
+  currentView = view;
+  el.viewPlayers.hidden = view !== "players";
+  el.viewLayouts.hidden = view !== "layouts";
+  el.viewEditor.hidden = view !== "editor";
+
+  if (view === "players") renderPlayers();
+  if (view === "layouts") renderLayoutIndex();
+  if (view === "editor") renderEditor();
+}
+
+function openEditor(id: string) {
+  editingLayoutId = id;
+  setEditingLayoutId(id);
+  showView("editor");
 }
 
 // --- key labelling --------------------------------------------------------
@@ -193,26 +222,119 @@ function escapeHtml(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Render: layouts index
+// ---------------------------------------------------------------------------
+
+function renderLayoutIndex() {
+  el.layoutsEmptyHint.style.display = layouts.length ? "none" : "block";
+  el.layoutIndex.innerHTML = "";
+  for (const layout of layouts) {
+    el.layoutIndex.appendChild(renderLayoutIndexRow(layout));
+  }
+}
+
+function renderLayoutIndexRow(layout: Layout): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className = "layout-index-row";
+  li.dataset.id = layout.id;
+  li.draggable = true;
+
+  const grip = document.createElement("span");
+  grip.className = "grip";
+  grip.textContent = "⠿";
+  grip.title = "Drag to reorder";
+
+  const meta = document.createElement("div");
+  meta.className = "layout-meta";
+  const n = layout.buttons.length;
+  meta.innerHTML = `
+    <span class="layout-title">${escapeHtml(layout.name) || "Untitled"}</span>
+    <span class="layout-sub">${n} button${n === 1 ? "" : "s"}</span>
+  `;
+
+  const edit = document.createElement("button");
+  edit.className = "ghost-btn";
+  edit.textContent = "Edit";
+  edit.addEventListener("click", () => openEditor(layout.id));
+
+  const del = document.createElement("button");
+  del.className = "ghost-btn danger";
+  del.textContent = "Delete";
+  del.addEventListener("click", () => deleteLayout(layout.id));
+
+  li.append(grip, meta, edit, del);
+  wireRowDrag(li);
+  return li;
+}
+
+// --- drag reordering ------------------------------------------------------
+
+// Standard HTML5 drag-and-drop reorder: the dragged row moves live in the DOM
+// during dragover; on drop we rebuild the `layouts` array from the DOM order.
+function wireRowDrag(li: HTMLLIElement) {
+  li.addEventListener("dragstart", (e) => {
+    li.classList.add("dragging");
+    e.dataTransfer?.setData("text/plain", li.dataset.id || "");
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+  });
+  li.addEventListener("dragend", () => {
+    li.classList.remove("dragging");
+    commitIndexOrder();
+  });
+}
+
+el.layoutIndex.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  const dragging = el.layoutIndex.querySelector(".dragging") as HTMLElement | null;
+  if (!dragging) return;
+  const after = dragAfterElement(el.layoutIndex, e.clientY);
+  if (after == null) el.layoutIndex.appendChild(dragging);
+  else el.layoutIndex.insertBefore(dragging, after);
+});
+
+function dragAfterElement(container: HTMLElement, y: number): HTMLElement | null {
+  const rows = [...container.querySelectorAll<HTMLElement>(".layout-index-row:not(.dragging)")];
+  let closest: { offset: number; element: HTMLElement | null } = {
+    offset: Number.NEGATIVE_INFINITY,
+    element: null,
+  };
+  for (const row of rows) {
+    const box = row.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) closest = { offset, element: row };
+  }
+  return closest.element;
+}
+
+// Re-derive layout order from the current DOM, persist it, and refresh the
+// player dropdowns (which list layouts in this order).
+function commitIndexOrder() {
+  const order = [...el.layoutIndex.querySelectorAll<HTMLElement>(".layout-index-row")].map(
+    (li) => li.dataset.id,
+  );
+  const byId = new Map(layouts.map((l) => [l.id, l]));
+  const reordered = order.map((id) => byId.get(id!)).filter(Boolean) as Layout[];
+  if (reordered.length !== layouts.length) return; // safety: don't lose any
+  const changed = reordered.some((l, i) => l.id !== layouts[i].id);
+  if (!changed) return;
+  layouts = reordered;
+  persistLayouts();
+}
+
+// ---------------------------------------------------------------------------
 // Render: layout editor
 // ---------------------------------------------------------------------------
 
-function renderLayoutPanel() {
+function renderEditor() {
   const layout = editingLayout();
-
-  // Layout picker.
-  el.layoutSelect.innerHTML = "";
-  for (const l of layouts) {
-    const opt = document.createElement("option");
-    opt.value = l.id;
-    opt.textContent = l.name || "Untitled";
-    opt.selected = l.id === layout.id;
-    el.layoutSelect.appendChild(opt);
+  if (!layout) {
+    // The edited layout is gone (e.g. deleted) — bounce back to the index.
+    showView("layouts");
+    return;
   }
 
   el.layoutName.value = layout.name;
-  el.deleteLayoutBtn.disabled = layouts.length <= 1;
 
-  // Button editor rows.
   el.layoutButtons.innerHTML = "";
   layout.buttons.forEach((button) => {
     el.layoutButtons.appendChild(renderButtonRow(layout, button));
@@ -256,7 +378,7 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
   keyBtn.title = "Default key (used unless a player overrides it)";
   keyBtn.addEventListener("click", () => {
     capture = isCapturing ? null : { kind: "default", buttonId: button.id };
-    render();
+    renderEditor();
   });
 
   const del = document.createElement("button");
@@ -366,7 +488,7 @@ function renderPlayerBinding(member: Member, button: ButtonDef): HTMLDivElement 
     capture = isCapturing
       ? null
       : { kind: "player", userId: member.id, buttonId: button.id };
-    render();
+    renderPlayers();
   });
 
   wrap.append(name, keyBtn);
@@ -385,11 +507,6 @@ function renderPlayerBinding(member: Member, button: ButtonDef): HTMLDivElement 
   return wrap;
 }
 
-function render() {
-  renderLayoutPanel();
-  renderPlayers();
-}
-
 function flashPlayer(userId: string) {
   const li = el.playerList.querySelector(`li[data-id="${CSS.escape(userId)}"]`);
   if (!li) return;
@@ -404,9 +521,10 @@ function flashPlayer(userId: string) {
 
 function addButton() {
   const layout = editingLayout();
+  if (!layout) return;
   layout.buttons.push(newButton(`Button ${layout.buttons.length + 1}`));
   persistLayouts();
-  render();
+  renderEditor();
   void pushLayoutToAssigned(layout.id);
 }
 
@@ -416,7 +534,7 @@ function removeButton(layout: Layout, buttonId: string) {
   for (const config of Object.values(players)) delete config.overrides[buttonId];
   persistLayouts();
   savePlayers(players);
-  render();
+  renderEditor();
   void pushLayoutToAssigned(layout.id);
 }
 
@@ -436,14 +554,6 @@ function setPlayerLayout(userId: string, layoutId: string | null) {
   pushToPlayer(userId);
 }
 
-function selectEditingLayout(id: string) {
-  if (id === editingLayoutId) return;
-  editingLayoutId = id;
-  setEditingLayoutId(id);
-  capture = null;
-  renderLayoutPanel();
-}
-
 function createLayout() {
   const layout: Layout = {
     id: crypto.randomUUID(),
@@ -452,50 +562,43 @@ function createLayout() {
   };
   layouts.push(layout);
   persistLayouts();
-  editingLayoutId = layout.id;
-  setEditingLayoutId(layout.id);
-  capture = null;
-  render(); // players panel needs the new layout in its assignment dropdowns
+  openEditor(layout.id);
   el.layoutName.focus();
   el.layoutName.select();
 }
 
 function duplicateCurrentLayout() {
   const source = editingLayout();
+  if (!source) return;
   const copy = duplicateLayout(source, `${source.name} copy`);
   layouts.push(copy);
   persistLayouts();
-  editingLayoutId = copy.id;
-  setEditingLayoutId(copy.id);
-  capture = null;
-  render(); // players panel needs the new layout in its assignment dropdowns
+  openEditor(copy.id);
   el.layoutName.focus();
   el.layoutName.select();
   toast(`Duplicated "${source.name}"`);
 }
 
-function deleteLayout() {
-  if (layouts.length <= 1) return;
-  const removed = editingLayout();
+function deleteLayout(id: string) {
+  const removed = layouts.find((l) => l.id === id);
+  if (!removed) return;
   if (!confirm(`Delete layout "${removed.name}"?`)) return;
 
-  layouts = layouts.filter((l) => l.id !== removed.id);
+  layouts = layouts.filter((l) => l.id !== id);
   persistLayouts();
 
   // Unassign anyone who was on it; they fall back to a blank screen.
   const affected: string[] = [];
   for (const [userId, config] of Object.entries(players)) {
-    if (config.layoutId === removed.id) {
+    if (config.layoutId === id) {
       config.layoutId = null;
       affected.push(userId);
     }
   }
   savePlayers(players);
 
-  editingLayoutId = layouts[0].id;
-  setEditingLayoutId(editingLayoutId);
-  capture = null;
-  render();
+  if (editingLayoutId === id) editingLayoutId = null;
+  renderLayoutIndex();
   for (const userId of affected) pushToPlayer(userId);
 }
 
@@ -522,7 +625,7 @@ window.addEventListener("keydown", (e) => {
   e.preventDefault();
   if (e.code === "Escape") {
     capture = null;
-    render();
+    rerenderCaptureView();
     return;
   }
   if (MODIFIER_CODES.has(e.code)) return; // hold for the main key
@@ -537,7 +640,7 @@ window.addEventListener("keydown", (e) => {
   const binding: Binding = { modifiers: ordered, code: e.code };
 
   if (capture.kind === "default") {
-    const button = editingLayout().buttons.find((b) => b.id === capture!.buttonId);
+    const button = editingLayout()?.buttons.find((b) => b.id === capture!.buttonId);
     if (button) {
       button.binding = binding;
       persistLayouts();
@@ -548,8 +651,14 @@ window.addEventListener("keydown", (e) => {
   }
 
   capture = null;
-  render();
+  rerenderCaptureView();
 });
+
+// Re-render whichever view owns the capture UI.
+function rerenderCaptureView() {
+  if (currentView === "editor") renderEditor();
+  else renderPlayers();
+}
 
 // ---------------------------------------------------------------------------
 // OS keypress dispatch (Rust/enigo via Tauri command)
@@ -704,7 +813,7 @@ async function connect() {
       }
       if (!m.online) initialized.delete(m.id);
     }
-    renderPlayers();
+    if (currentView === "players") renderPlayers();
   });
 
   // A player tapped one of their buttons. The Button's `event` is its id.
@@ -744,6 +853,7 @@ async function newRoom() {
 
 async function doExport() {
   const layout = editingLayout();
+  if (!layout) return;
   const json = exportLayout(layout);
 
   // Offer a file download…
@@ -777,11 +887,8 @@ function applyImport(json: string): boolean {
     const layout = importLayout(json);
     layouts.push(layout);
     persistLayouts();
-    editingLayoutId = layout.id;
-    setEditingLayoutId(layout.id);
-    capture = null;
-    render();
     toast(`Imported "${layout.name}"`);
+    openEditor(layout.id); // jump straight into editing the imported layout
     return true;
   } catch (err) {
     el.importError.textContent = (err as Error).message;
@@ -793,38 +900,39 @@ function applyImport(json: string): boolean {
 // Wire up DOM events
 // ---------------------------------------------------------------------------
 
+// players view
 el.newRoomBtn.addEventListener("click", () => void newRoom());
-el.layoutSelect.addEventListener("change", () => selectEditingLayout(el.layoutSelect.value));
+el.manageLayoutsBtn.addEventListener("click", () => showView("layouts"));
+
+// layouts index view
+el.layoutsBack.addEventListener("click", () => showView("players"));
 el.newLayoutBtn.addEventListener("click", () => createLayout());
+el.importBtn.addEventListener("click", () => openImport());
+
+// editor view
+el.editorBack.addEventListener("click", () => showView("layouts"));
 el.layoutName.addEventListener("input", () => {
-  editingLayout().name = el.layoutName.value;
-  persistLayouts();
-  // Reflect the rename in the picker + every player's assignment dropdown
-  // without disturbing the focused input.
-  const label = el.layoutName.value || "Untitled";
-  for (const opt of document.querySelectorAll<HTMLOptionElement>(
-    `option[value="${CSS.escape(editingLayoutId)}"]`,
-  )) {
-    opt.textContent = label;
+  const layout = editingLayout();
+  if (layout) {
+    layout.name = el.layoutName.value;
+    persistLayouts();
   }
 });
 el.addButtonBtn.addEventListener("click", () => addButton());
 el.duplicateLayoutBtn.addEventListener("click", () => duplicateCurrentLayout());
 el.exportBtn.addEventListener("click", () => void doExport());
-el.importBtn.addEventListener("click", () => openImport());
-el.deleteLayoutBtn.addEventListener("click", () => deleteLayout());
 
+// import dialog
 el.importFile.addEventListener("change", async () => {
   const file = el.importFile.files?.[0];
   if (file) el.importText.value = await file.text();
 });
-
 // Validate before closing so a bad paste keeps the dialog open with the error.
 el.importConfirm.addEventListener("click", (e) => {
   e.preventDefault();
   if (applyImport(el.importText.value)) el.importDialog.close("import");
 });
 
-// Create/reuse a room and connect immediately on launch.
-render();
+// Show the home view, then create/reuse a room and connect on launch.
+showView("players");
 void connect();

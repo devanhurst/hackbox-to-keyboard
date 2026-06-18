@@ -71,12 +71,18 @@ On launch the app creates a room against `https://hackbox.ca` automatically and
 shows the room code — no configuration. Share that code; players join with the
 normal Hackbox client.
 
-**Build a layout.** In the **Layouts** panel, name a layout and add buttons with
-**+ Add button**. For each button set its label, colour, and a **Default key**
-(the key it fires unless a player overrides it). Use the **+** next to the picker
-to create more layouts; switch which one you're editing with the dropdown.
-**Duplicate** clones the current layout (fresh button ids) — the quick way to
-build a near-identical variant like "Duel P2" from "Duel P1".
+The UI has two screens: the **Players** home (room code + the roster) and a
+**Layouts** manager reached via **Manage layouts →**.
+
+**Manage layouts.** The Layouts screen lists every layout with a button count.
+**+ New layout** creates one (and opens the editor); **Import** brings in a
+shared layout. Each row has **Edit** and **Delete**, and a **⠿** drag handle to
+reorder — the order here is the order players see in their layout dropdown.
+
+**Edit a layout.** In the editor, set the name and add buttons with **+ Add
+button**. For each button set its label, colour, and a **Default key** (the key
+it fires unless a player overrides it). **Duplicate** clones the layout (fresh
+button ids) — the quick way to build a variant like "Duel P2" from "Duel P1".
 
 **Assign per player.** Under **Players**, each player has a **layout dropdown**.
 New players start on **No layout** (a blank screen) until you pick one — and you
@@ -84,12 +90,13 @@ can give different players different layouts.
 
 **Set keys.** Click a key field and press the key — or modifier combo (e.g.
 Shift+J, Ctrl+Cmd+Space). Hold the modifiers and press the main key; Esc cancels
-capture. The Default key fields live in the Layouts panel; under each assigned
+capture. The Default key fields live in the layout editor; under each assigned
 player every button shows its effective key — click one to set a **per-player
 override** (shown highlighted) and use **↺** to revert it to the layout default.
 
-**Share.** **Export** copies the edited layout's JSON to the clipboard and
-downloads a `.hackboxkb.json` file; **Import** accepts pasted JSON or a file.
+**Share.** In the editor, **Export** copies the layout's JSON to the clipboard
+and downloads a `.hackboxkb.json` file; **Import** (on the Layouts screen)
+accepts pasted JSON or a file.
 
 The host is hardcoded ([`SERVER_URL` in `src/main.ts`](src/main.ts)); change it
 there to point at a local backend (api on `:8787`, relay on `:1999`) for dev.
