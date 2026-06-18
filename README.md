@@ -5,11 +5,13 @@ shows each connected player a **custom layout of buttons**, and casts each butto
 press to an **OS-level keypress** on the host machine — so player taps can drive
 any game or app, not just the browser.
 
-Build a layout with any number of buttons, give each one a label and a colour,
-and map it to a key. The same layout drives every player, but each button's key
-can be **overridden per-player** — so in a game like "Duel" both players can see
-the same six buttons (four answers, accelerate, lock-in) while each player's
-buttons fire different keys. Save as many layouts as you like and
+Build layouts with any number of buttons — each with its own label, colour, and
+key — and **assign a layout per player**. Players start with a blank screen until
+the host gives them one, and different players can be on different layouts. For a
+game like "Duel" you might make two six-button layouts ("Duel P1" / "Duel P2",
+each with four answers, accelerate, lock-in) whose keys differ, and assign one to
+each player. A layout's keys are its **defaults**; any player's button can also be
+**overridden** individually. Save as many layouts as you like and
 **export/import** them as JSON to share with friends.
 
 This is the cross-platform answer to the Windows-only Unity version: the web UI
@@ -25,8 +27,9 @@ lives in a WebView, and key injection is done in Rust via
    [`partysocket`](https://www.npmjs.com/package/partysocket). The relay treats
    any connection whose `userId` equals the room's `hostId` as the host, so this
    app *is* the host. Frames are JSON envelopes `{ type, payload }`.
-3. It pushes the active layout — a stack of `Button` components, one per button —
-   to every player who joins. Each button's `event` is its stable id, so the host
+3. When a player joins it pushes their saved state: the layout assigned to that
+   userId rendered as a stack of `Button` components (one per button), or a blank
+   screen if they have none. Each button's `event` is its stable id, so the host
    can map a tap back to the right key. (The hackbox player view renders the main
    area as a single column, so buttons stack vertically and are auto-sized to
    share the screen.)
@@ -41,17 +44,21 @@ raw WebSocket); the connector in [`src/hackboxSocket.ts`](src/hackboxSocket.ts)
 is ported from the hackbox client SDK and re-exposes a small `on`/`emit` surface
 over that envelope protocol, plus a `"ping"`/`"pong"` keepalive.
 
-Layouts and bindings are stored in `localStorage`. Bindings are keyed by
+Layouts and per-player config are stored in `localStorage`. Bindings are keyed by
 `KeyboardEvent.code` (physical key), so layouts and game scancode reads behave
 predictably. The data model lives in [`src/layouts.ts`](src/layouts.ts):
 
 - **Layouts** — a named list of buttons (`{ id, name, buttons }`). Each button has
-  a `label`, `color`, and an optional **default** `binding`.
-- **Per-player overrides** — `userId → (buttonId → binding)`, layered over the
-  button's default so the same layout can fire different keys for each player.
+  a `label`, `color`, and an optional **default** `binding`. Layouts are purely
+  reusable templates; assigning one to a player is a separate step.
+- **Per-player config** — `userId → { layoutId, overrides }`. `layoutId` is the
+  layout assigned to that player (`null` = blank screen); `overrides` is
+  `buttonId → binding`, layered over each button's default. Config persists by
+  userId, so a returning player keeps their assignment.
 - **Export/import** — `exportLayout`/`importLayout` (de)serialize a layout as
-  JSON (`{ type: "hackbox-keyboard-layout", version, layout }`). Per-player
-  overrides are *not* exported — they're tied to specific userIds on this machine.
+  JSON (`{ type: "hackbox-keyboard-layout", version, layout }`), keys included.
+  Per-player config is *not* exported — it's tied to specific userIds on this
+  machine.
 
 ## Develop
 
@@ -64,22 +71,23 @@ On launch the app creates a room against `https://hackbox.ca` automatically and
 shows the room code — no configuration. Share that code; players join with the
 normal Hackbox client.
 
-**Build a layout.** In the **Layout** panel, name your layout and add buttons
-with **+ Add button**. For each button set its label, colour, and a **Default
-key** (the key all players' copies of that button fire). Use the **+** next to
-the layout picker to create more layouts; switch between them with the dropdown.
+**Build a layout.** In the **Layouts** panel, name a layout and add buttons with
+**+ Add button**. For each button set its label, colour, and a **Default key**
+(the key it fires unless a player overrides it). Use the **+** next to the picker
+to create more layouts; switch which one you're editing with the dropdown.
+
+**Assign per player.** Under **Players**, each player has a **layout dropdown**.
+New players start on **No layout** (a blank screen) until you pick one — and you
+can give different players different layouts.
 
 **Set keys.** Click a key field and press the key — or modifier combo (e.g.
 Shift+J, Ctrl+Cmd+Space). Hold the modifiers and press the main key; Esc cancels
-capture. Under each player, every button shows its effective key; click one to
-set a **per-player override** (shown highlighted) and use **↺** to revert it to
-the layout default.
+capture. The Default key fields live in the Layouts panel; under each assigned
+player every button shows its effective key — click one to set a **per-player
+override** (shown highlighted) and use **↺** to revert it to the layout default.
 
-**Share.** **Export** copies the active layout's JSON to the clipboard and
+**Share.** **Export** copies the edited layout's JSON to the clipboard and
 downloads a `.hackboxkb.json` file; **Import** accepts pasted JSON or a file.
-
-The host is hardcoded ([`SERVER_URL` in `src/main.ts`](src/main.ts)); change it
-there to point at a local backend (api on `:8787`, relay on `:1999`) for dev.
 
 The host is hardcoded ([`SERVER_URL` in `src/main.ts`](src/main.ts)); change it
 there to point at a local backend (api on `:8787`, relay on `:1999`) for dev.

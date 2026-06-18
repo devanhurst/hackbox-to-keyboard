@@ -35,14 +35,19 @@
 
       <section class="layout">
         <div class="section-head">
-          <h2>Layout</h2>
+          <h2>Layouts</h2>
           <div class="layout-picker">
-            <select id="layout-select" aria-label="Active layout"></select>
+            <select id="layout-select" aria-label="Layout being edited"></select>
             <button id="new-layout-btn" class="icon-btn" title="New layout" aria-label="New layout">
               +
             </button>
           </div>
         </div>
+
+        <p class="hint">
+          Design reusable button layouts here, then assign one to each player below. Keys set
+          here are the layout's defaults — a player can override any of them individually.
+        </p>
 
         <label class="field">
           <span class="field-label">Name</span>
@@ -62,7 +67,10 @@
       <section class="players">
         <h2>Players</h2>
         <ul id="player-list"></ul>
-        <p id="empty-hint" class="hint">No players yet. Share the room code to let people join.</p>
+        <p id="empty-hint" class="hint">
+          No players yet. Share the room code to let people join. New players start with a blank
+          screen until you assign them a layout.
+        </p>
       </section>
     </main>
 

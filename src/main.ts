@@ -1,22 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
-import { layoutState } from "./memberState";
+import { emptyState, layoutState } from "./memberState";
 import { createHackboxSocket, type HackboxSocket } from "./hackboxSocket";
 import {
   exportLayout,
-  getActiveLayoutId,
+  getEditingLayoutId,
   importLayout,
   loadLayouts,
-  loadPlayerBindings,
+  loadPlayers,
   MODIFIER_ORDER,
   newButton,
   saveLayouts,
-  savePlayerBindings,
-  setActiveLayoutId,
+  savePlayers,
+  setEditingLayoutId,
   type Binding,
   type ButtonDef,
   type Layout,
   type Modifier,
-  type PlayerBindings,
+  type PlayerConfig,
+  type Players,
 } from "./layouts";
 
 // ---------------------------------------------------------------------------
@@ -61,30 +62,44 @@ interface Member {
 }
 
 let layouts: Layout[] = loadLayouts();
-let activeLayoutId: string = resolveActiveLayoutId();
-let playerBindings: PlayerBindings = loadPlayerBindings();
+let editingLayoutId: string = resolveEditingLayoutId();
+let players: Players = loadPlayers();
 
 let socket: HackboxSocket | null = null;
 let members: Record<string, Member> = {};
-const initialized = new Set<string>(); // players we've pushed the layout to
+const initialized = new Set<string>(); // players we've pushed an initial state to
 
-// What a key capture, if any, is targeting: a button's default key, or a
-// specific player's override of a button.
+// What a key capture, if any, is targeting: a button's default key (in the
+// layout editor), or a specific player's override of a button.
 type CaptureTarget =
   | { kind: "default"; buttonId: string }
   | { kind: "player"; userId: string; buttonId: string };
 let capture: CaptureTarget | null = null;
 
-function resolveActiveLayoutId(): string {
-  const stored = getActiveLayoutId();
+function resolveEditingLayoutId(): string {
+  const stored = getEditingLayoutId();
   if (stored && layouts.some((l) => l.id === stored)) return stored;
   const id = layouts[0].id;
-  setActiveLayoutId(id);
+  setEditingLayoutId(id);
   return id;
 }
 
-function activeLayout(): Layout {
-  return layouts.find((l) => l.id === activeLayoutId) ?? layouts[0];
+// The layout currently shown in the editor panel.
+function editingLayout(): Layout {
+  return layouts.find((l) => l.id === editingLayoutId) ?? layouts[0];
+}
+
+function layoutById(id: string | null | undefined): Layout | undefined {
+  return id ? layouts.find((l) => l.id === id) : undefined;
+}
+
+// The layout a given player is assigned, if any.
+function assignedLayout(userId: string): Layout | undefined {
+  return layoutById(players[userId]?.layoutId);
+}
+
+function ensurePlayer(userId: string): PlayerConfig {
+  return (players[userId] ||= { layoutId: null, overrides: {} });
 }
 
 function persistLayouts() {
@@ -94,7 +109,7 @@ function persistLayouts() {
 // The binding that actually fires for a player's button: their override if set,
 // otherwise the button's default.
 function effectiveBinding(userId: string, button: ButtonDef): Binding | null {
-  return playerBindings[userId]?.[button.id] ?? button.binding;
+  return players[userId]?.overrides[button.id] ?? button.binding;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +195,7 @@ function escapeHtml(s: string): string {
 // ---------------------------------------------------------------------------
 
 function renderLayoutPanel() {
-  const layout = activeLayout();
+  const layout = editingLayout();
 
   // Layout picker.
   el.layoutSelect.innerHTML = "";
@@ -214,7 +229,7 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
   color.addEventListener("input", () => {
     button.color = color.value;
     persistLayouts();
-    scheduleRepushAll();
+    scheduleRepushLayout(layout.id);
   });
 
   const label = document.createElement("input");
@@ -225,7 +240,7 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
   label.addEventListener("input", () => {
     button.label = label.value;
     persistLayouts();
-    scheduleRepushAll();
+    scheduleRepushLayout(layout.id);
   });
 
   const isCapturing = capture?.kind === "default" && capture.buttonId === button.id;
@@ -236,10 +251,9 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
     : button.binding
       ? bindingLabel(button.binding)
       : "Default key";
-  keyBtn.title = "Default key for all players";
+  keyBtn.title = "Default key (used unless a player overrides it)";
   keyBtn.addEventListener("click", () => {
-    capture =
-      isCapturing ? null : { kind: "default", buttonId: button.id };
+    capture = isCapturing ? null : { kind: "default", buttonId: button.id };
     render();
   });
 
@@ -259,33 +273,60 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
 // ---------------------------------------------------------------------------
 
 function renderPlayers() {
-  const layout = activeLayout();
   const list = Object.values(members).sort((a, b) => a.name.localeCompare(b.name));
   el.emptyHint.style.display = list.length ? "none" : "block";
   el.playerList.innerHTML = "";
 
   for (const m of list) {
-    const li = document.createElement("li");
-    li.className = "player" + (m.online ? "" : " offline");
-    li.dataset.id = m.id;
+    el.playerList.appendChild(renderPlayerCard(m));
+  }
+}
 
-    const head = document.createElement("div");
-    head.className = "player-head";
-    head.innerHTML = `
-      <span class="player-dot ${m.online ? "online" : "offline"}"></span>
-      <span class="player-name">${escapeHtml(m.name)}</span>
-    `;
-    li.appendChild(head);
+function renderPlayerCard(member: Member): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className = "player" + (member.online ? "" : " offline");
+  li.dataset.id = member.id;
 
+  // Header: status dot, name, and the per-player layout assignment.
+  const head = document.createElement("div");
+  head.className = "player-head";
+  head.innerHTML = `
+    <span class="player-dot ${member.online ? "online" : "offline"}"></span>
+    <span class="player-name">${escapeHtml(member.name)}</span>
+  `;
+
+  const select = document.createElement("select");
+  select.className = "layout-assign";
+  select.title = "Layout for this player";
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "No layout";
+  select.appendChild(none);
+  for (const l of layouts) {
+    const opt = document.createElement("option");
+    opt.value = l.id;
+    opt.textContent = l.name || "Untitled";
+    select.appendChild(opt);
+  }
+  select.value = players[member.id]?.layoutId ?? "";
+  select.addEventListener("change", () =>
+    setPlayerLayout(member.id, select.value || null),
+  );
+  head.appendChild(select);
+  li.appendChild(head);
+
+  // Bindings for the assigned layout, if any.
+  const layout = assignedLayout(member.id);
+  if (layout && layout.buttons.length) {
     const grid = document.createElement("div");
     grid.className = "player-bindings";
     for (const button of layout.buttons) {
-      grid.appendChild(renderPlayerBinding(m, button));
+      grid.appendChild(renderPlayerBinding(member, button));
     }
     li.appendChild(grid);
-
-    el.playerList.appendChild(li);
   }
+
+  return li;
 }
 
 function renderPlayerBinding(member: Member, button: ButtonDef): HTMLDivElement {
@@ -296,7 +337,7 @@ function renderPlayerBinding(member: Member, button: ButtonDef): HTMLDivElement 
   name.className = "binding-label";
   name.textContent = button.label || "(unnamed)";
 
-  const override = playerBindings[member.id]?.[button.id];
+  const override = players[member.id]?.overrides[button.id];
   const effective = override ?? button.binding;
   const isCapturing =
     capture?.kind === "player" &&
@@ -315,7 +356,7 @@ function renderPlayerBinding(member: Member, button: ButtonDef): HTMLDivElement 
       ? bindingLabel(effective)
       : "Set key";
   keyBtn.title = override
-    ? "Per-player key (overrides default)"
+    ? "Per-player key (overrides the layout default)"
     : effective
       ? "Using the layout's default key"
       : "No key set";
@@ -328,7 +369,7 @@ function renderPlayerBinding(member: Member, button: ButtonDef): HTMLDivElement 
 
   wrap.append(name, keyBtn);
 
-  // Allow reverting a per-player override back to the default.
+  // Allow reverting a per-player override back to the layout default.
   if (override) {
     const reset = document.createElement("button");
     reset.className = "reset-btn";
@@ -360,39 +401,45 @@ function flashPlayer(userId: string) {
 // ---------------------------------------------------------------------------
 
 function addButton() {
-  const layout = activeLayout();
+  const layout = editingLayout();
   layout.buttons.push(newButton(`Button ${layout.buttons.length + 1}`));
   persistLayouts();
   render();
-  void pushLayoutToAll();
+  void pushLayoutToAssigned(layout.id);
 }
 
 function removeButton(layout: Layout, buttonId: string) {
   layout.buttons = layout.buttons.filter((b) => b.id !== buttonId);
   // Drop any per-player overrides for the removed button.
-  for (const map of Object.values(playerBindings)) delete map[buttonId];
+  for (const config of Object.values(players)) delete config.overrides[buttonId];
   persistLayouts();
-  savePlayerBindings(playerBindings);
+  savePlayers(players);
   render();
-  void pushLayoutToAll();
+  void pushLayoutToAssigned(layout.id);
 }
 
 function clearOverride(userId: string, buttonId: string) {
-  const map = playerBindings[userId];
-  if (!map) return;
-  delete map[buttonId];
-  if (Object.keys(map).length === 0) delete playerBindings[userId];
-  savePlayerBindings(playerBindings);
+  const config = players[userId];
+  if (!config) return;
+  delete config.overrides[buttonId];
+  savePlayers(players);
   renderPlayers();
 }
 
-function selectLayout(id: string) {
-  if (id === activeLayoutId) return;
-  activeLayoutId = id;
-  setActiveLayoutId(id);
+function setPlayerLayout(userId: string, layoutId: string | null) {
+  ensurePlayer(userId).layoutId = layoutId;
+  savePlayers(players);
   capture = null;
-  render();
-  void pushLayoutToAll();
+  renderPlayers();
+  pushToPlayer(userId);
+}
+
+function selectEditingLayout(id: string) {
+  if (id === editingLayoutId) return;
+  editingLayoutId = id;
+  setEditingLayoutId(id);
+  capture = null;
+  renderLayoutPanel();
 }
 
 function createLayout() {
@@ -403,22 +450,37 @@ function createLayout() {
   };
   layouts.push(layout);
   persistLayouts();
-  selectLayout(layout.id);
+  editingLayoutId = layout.id;
+  setEditingLayoutId(layout.id);
+  capture = null;
+  render(); // players panel needs the new layout in its assignment dropdowns
   el.layoutName.focus();
   el.layoutName.select();
 }
 
 function deleteLayout() {
   if (layouts.length <= 1) return;
-  const removed = activeLayout();
+  const removed = editingLayout();
   if (!confirm(`Delete layout "${removed.name}"?`)) return;
+
   layouts = layouts.filter((l) => l.id !== removed.id);
   persistLayouts();
-  activeLayoutId = layouts[0].id;
-  setActiveLayoutId(activeLayoutId);
+
+  // Unassign anyone who was on it; they fall back to a blank screen.
+  const affected: string[] = [];
+  for (const [userId, config] of Object.entries(players)) {
+    if (config.layoutId === removed.id) {
+      config.layoutId = null;
+      affected.push(userId);
+    }
+  }
+  savePlayers(players);
+
+  editingLayoutId = layouts[0].id;
+  setEditingLayoutId(editingLayoutId);
   capture = null;
   render();
-  void pushLayoutToAll();
+  for (const userId of affected) pushToPlayer(userId);
 }
 
 // ---------------------------------------------------------------------------
@@ -459,15 +521,14 @@ window.addEventListener("keydown", (e) => {
   const binding: Binding = { modifiers: ordered, code: e.code };
 
   if (capture.kind === "default") {
-    const button = activeLayout().buttons.find((b) => b.id === capture!.buttonId);
+    const button = editingLayout().buttons.find((b) => b.id === capture!.buttonId);
     if (button) {
       button.binding = binding;
       persistLayouts();
     }
   } else {
-    const map = (playerBindings[capture.userId] ||= {});
-    map[capture.buttonId] = binding;
-    savePlayerBindings(playerBindings);
+    ensurePlayer(capture.userId).overrides[capture.buttonId] = binding;
+    savePlayers(players);
   }
 
   capture = null;
@@ -518,31 +579,38 @@ async function ensureRoom(apiBase: string): Promise<string> {
   return data.roomCode;
 }
 
-// Push the active layout to a player. Re-pushing resets each button's
-// "submitted" lock so presses are repeatable.
-function pushLayoutTo(userId: string) {
-  socket?.emit("member.update", {
+// Push a player's current state: their assigned layout, or a blank screen if
+// they have none. Re-pushing a layout also resets each button's "submitted"
+// lock so presses are repeatable.
+function pushToPlayer(userId: string) {
+  if (!socket) return;
+  const name = members[userId]?.name || "";
+  const layout = assignedLayout(userId);
+  socket.emit("member.update", {
     to: userId,
-    data: layoutState(members[userId]?.name || "", activeLayout()),
+    data: layout ? layoutState(name, layout) : emptyState(name),
   });
 }
 
-async function pushLayoutToAll() {
+// Re-push to every online player currently assigned the given layout (after its
+// structure — labels/colours/buttons — changed).
+function pushLayoutToAssigned(layoutId: string) {
   if (!socket) return;
-  // Push per-player so each keeps their own header (their name).
   for (const m of Object.values(members)) {
-    if (m.online) pushLayoutTo(m.id);
+    if (m.online && players[m.id]?.layoutId === layoutId) pushToPlayer(m.id);
   }
 }
 
-// Label edits arrive keystroke-by-keystroke; debounce the re-push so we don't
-// spam the relay while the host is typing.
+// Label/colour edits arrive keystroke-by-keystroke; debounce the re-push so we
+// don't spam the relay while the host is typing.
 let repushTimer: ReturnType<typeof setTimeout> | null = null;
-function scheduleRepushAll() {
+let repushLayoutId: string | null = null;
+function scheduleRepushLayout(layoutId: string) {
+  repushLayoutId = layoutId;
   if (repushTimer !== null) clearTimeout(repushTimer);
   repushTimer = setTimeout(() => {
     repushTimer = null;
-    void pushLayoutToAll();
+    if (repushLayoutId) pushLayoutToAssigned(repushLayoutId);
   }, 350);
 }
 
@@ -615,7 +683,8 @@ async function connect() {
     for (const m of Object.values(members)) {
       if (m.online && !initialized.has(m.id)) {
         initialized.add(m.id);
-        pushLayoutTo(m.id);
+        // Push their saved assignment (blank if none / first time).
+        pushToPlayer(m.id);
       }
       if (!m.online) initialized.delete(m.id);
     }
@@ -627,14 +696,15 @@ async function connect() {
     const p = payload as { from?: string; event?: string };
     const from = p?.from;
     if (!from) return;
-    const button = activeLayout().buttons.find((b) => b.id === p.event);
+    const layout = assignedLayout(from);
+    const button = layout?.buttons.find((b) => b.id === p.event);
     if (button) {
       const binding = effectiveBinding(from, button);
       if (binding) void pressKey(binding);
+      // Re-arm the player's buttons (clears the tapped button's submitted lock).
+      pushToPlayer(from);
     }
     flashPlayer(from);
-    // Re-arm the player's buttons (clears the tapped button's submitted lock).
-    pushLayoutTo(from);
   });
 }
 
@@ -657,7 +727,7 @@ async function newRoom() {
 // ---------------------------------------------------------------------------
 
 async function doExport() {
-  const layout = activeLayout();
+  const layout = editingLayout();
   const json = exportLayout(layout);
 
   // Offer a file download…
@@ -691,11 +761,10 @@ function applyImport(json: string): boolean {
     const layout = importLayout(json);
     layouts.push(layout);
     persistLayouts();
-    activeLayoutId = layout.id;
-    setActiveLayoutId(activeLayoutId);
+    editingLayoutId = layout.id;
+    setEditingLayoutId(layout.id);
     capture = null;
     render();
-    void pushLayoutToAll();
     toast(`Imported "${layout.name}"`);
     return true;
   } catch (err) {
@@ -709,14 +778,19 @@ function applyImport(json: string): boolean {
 // ---------------------------------------------------------------------------
 
 el.newRoomBtn.addEventListener("click", () => void newRoom());
-el.layoutSelect.addEventListener("change", () => selectLayout(el.layoutSelect.value));
+el.layoutSelect.addEventListener("change", () => selectEditingLayout(el.layoutSelect.value));
 el.newLayoutBtn.addEventListener("click", () => createLayout());
 el.layoutName.addEventListener("input", () => {
-  activeLayout().name = el.layoutName.value;
+  editingLayout().name = el.layoutName.value;
   persistLayouts();
-  // Reflect the rename in the picker without disturbing the focused input.
-  const opt = el.layoutSelect.querySelector(`option[value="${CSS.escape(activeLayoutId)}"]`);
-  if (opt) opt.textContent = el.layoutName.value || "Untitled";
+  // Reflect the rename in the picker + every player's assignment dropdown
+  // without disturbing the focused input.
+  const label = el.layoutName.value || "Untitled";
+  for (const opt of document.querySelectorAll<HTMLOptionElement>(
+    `option[value="${CSS.escape(editingLayoutId)}"]`,
+  )) {
+    opt.textContent = label;
+  }
 });
 el.addButtonBtn.addEventListener("click", () => addButton());
 el.exportBtn.addEventListener("click", () => void doExport());

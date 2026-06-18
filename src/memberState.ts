@@ -24,6 +24,20 @@ function fontSize(count: number): string {
   return "1.4rem";
 }
 
+// What an unassigned player sees: a blank screen (just their header). Players
+// get this until the host assigns them a layout.
+export function emptyState(headerText: string) {
+  return {
+    ui: {
+      header: { text: headerText },
+      main: {
+        align: "center" as const,
+        components: [] as unknown[],
+      },
+    },
+  };
+}
+
 export function layoutState(headerText: string, layout: Layout) {
   const count = layout.buttons.length;
   const height = buttonHeight(count);

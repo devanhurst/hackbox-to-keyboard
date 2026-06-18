@@ -1,15 +1,20 @@
 // ---------------------------------------------------------------------------
-// Layouts: the host's customizable button configurations.
+// Layouts & per-player config.
 //
 // A *layout* is a named set of buttons. Each button has a label (what the
-// player sees) and an optional *default* key binding. Bindings can be
-// overridden per-player (see PlayerBindings) so the same layout can drive
-// different keys for each player — e.g. in a duel, both players see the same
-// six buttons but each player's "accelerate" maps to a different key.
+// player sees), a colour, and an optional *default* key binding. Baking keys
+// into a layout makes it self-contained and shareable: e.g. "Duel Player 1" and
+// "Duel Player 2" are two six-button layouts with consistent, different keymaps.
 //
-// Layouts are persisted in localStorage and can be exported/imported as JSON
-// to share with friends. Per-player overrides are NOT exported (they're tied
-// to specific userIds and only meaningful on this machine).
+// A *player config* (keyed by userId) records which layout, if any, a player is
+// assigned, plus any per-player *overrides* of a button's default key. Effective
+// key = override ?? button default. Players start with NO config — they see
+// nothing until the host assigns them a layout, and different players can be on
+// different layouts.
+//
+// Layouts can be exported/imported as JSON to share with friends (keys
+// included). Player config is never exported (it's tied to specific userIds on
+// this machine).
 // ---------------------------------------------------------------------------
 
 export type Modifier = "Control" | "Alt" | "Shift" | "Meta";
@@ -25,7 +30,7 @@ export interface ButtonDef {
   id: string; // stable id within the layout; used as the button's event name
   label: string; // text shown on the player's button
   color: string; // button background colour
-  binding: Binding | null; // default key for this button (may be overridden per-player)
+  binding: Binding | null; // default key (may be overridden per-player)
 }
 
 export interface Layout {
@@ -34,16 +39,23 @@ export interface Layout {
   buttons: ButtonDef[];
 }
 
-// userId -> (buttonId -> Binding). A per-player override of a button's default.
-export type PlayerBindings = Record<string, Record<string, Binding>>;
+// A player's assignment: which layout they're on (null = none) plus any
+// per-player overrides of a button's default key, keyed by buttonId.
+export interface PlayerConfig {
+  layoutId: string | null;
+  overrides: Record<string, Binding>;
+}
+
+// userId -> PlayerConfig.
+export type Players = Record<string, PlayerConfig>;
 
 export const MODIFIER_ORDER: Modifier[] = ["Control", "Alt", "Shift", "Meta"];
 
 const LS = {
   layouts: "h2k.layouts",
-  activeLayoutId: "h2k.activeLayoutId",
-  playerBindings: "h2k.playerBindings",
-  legacyBindings: "h2k.bindings", // old single-button shape: userId -> Binding
+  editingLayoutId: "h2k.editingLayoutId",
+  players: "h2k.players",
+  legacyBindings: "h2k.bindings", // original single-button shape: userId -> Binding
 } as const;
 
 const DEFAULT_COLOR = "#7c5cff";
@@ -55,8 +67,7 @@ export function newButton(label = "Button", color = DEFAULT_COLOR): ButtonDef {
 }
 
 function defaultLayout(): Layout {
-  // Mirrors the original single full-screen "PRESS" button so existing setups
-  // keep working after the upgrade.
+  // A simple starting template mirroring the original single full-screen button.
   return {
     id: uid(),
     name: "Single Button",
@@ -117,12 +128,11 @@ export function loadLayouts(): Layout[] {
     if (layouts.length) return layouts;
   }
 
-  // First run (or corrupt store): seed a default layout and migrate any legacy
-  // single-button bindings onto it.
+  // First run (or corrupt store): seed a starter layout and migrate any legacy
+  // single-button bindings into per-player config assigned to it.
   const layout = defaultLayout();
-  migrateLegacyBindings(layout.buttons[0].id);
+  migrateLegacyBindings(layout.id, layout.buttons[0].id);
   saveLayouts([layout]);
-  setActiveLayoutId(layout.id);
   return [layout];
 }
 
@@ -130,55 +140,62 @@ export function saveLayouts(layouts: Layout[]) {
   localStorage.setItem(LS.layouts, JSON.stringify(layouts));
 }
 
-export function getActiveLayoutId(): string | null {
-  return localStorage.getItem(LS.activeLayoutId);
+export function getEditingLayoutId(): string | null {
+  return localStorage.getItem(LS.editingLayoutId);
 }
 
-export function setActiveLayoutId(id: string) {
-  localStorage.setItem(LS.activeLayoutId, id);
+export function setEditingLayoutId(id: string) {
+  localStorage.setItem(LS.editingLayoutId, id);
 }
 
-export function loadPlayerBindings(): PlayerBindings {
+export function loadPlayers(): Players {
   let raw: Record<string, unknown>;
   try {
-    raw = JSON.parse(localStorage.getItem(LS.playerBindings) || "{}");
+    raw = JSON.parse(localStorage.getItem(LS.players) || "{}");
   } catch {
     return {};
   }
-  const out: PlayerBindings = {};
-  for (const [userId, perButton] of Object.entries(raw)) {
-    if (!perButton || typeof perButton !== "object") continue;
-    const map: Record<string, Binding> = {};
-    for (const [buttonId, b] of Object.entries(perButton as Record<string, unknown>)) {
-      const binding = coerceBinding(b);
-      if (binding) map[buttonId] = binding;
+  const out: Players = {};
+  for (const [userId, v] of Object.entries(raw)) {
+    if (!v || typeof v !== "object") continue;
+    const c = v as Record<string, unknown>;
+    const overrides: Record<string, Binding> = {};
+    if (c.overrides && typeof c.overrides === "object") {
+      for (const [buttonId, b] of Object.entries(c.overrides as Record<string, unknown>)) {
+        const binding = coerceBinding(b);
+        if (binding) overrides[buttonId] = binding;
+      }
     }
-    if (Object.keys(map).length) out[userId] = map;
+    out[userId] = {
+      layoutId: typeof c.layoutId === "string" ? c.layoutId : null,
+      overrides,
+    };
   }
   return out;
 }
 
-export function savePlayerBindings(b: PlayerBindings) {
-  localStorage.setItem(LS.playerBindings, JSON.stringify(b));
+export function savePlayers(players: Players) {
+  localStorage.setItem(LS.players, JSON.stringify(players));
 }
 
 // Migrate the original `userId -> Binding` store (a single "press" button) into
-// per-player overrides keyed by the new default layout's button id.
-function migrateLegacyBindings(buttonId: string) {
+// per-player config assigned to the seeded layout, with the old key kept as a
+// per-player override.
+function migrateLegacyBindings(layoutId: string, buttonId: string) {
   let raw: Record<string, unknown>;
   try {
     raw = JSON.parse(localStorage.getItem(LS.legacyBindings) || "{}");
   } catch {
     return;
   }
-  const migrated: PlayerBindings = {};
+  const players: Players = {};
   for (const [userId, v] of Object.entries(raw)) {
     // Old shapes: plain "KeyA" string, or { modifiers, code }.
     const binding =
       typeof v === "string" ? { code: v, modifiers: [] as Modifier[] } : coerceBinding(v);
-    if (binding) migrated[userId] = { [buttonId]: binding };
+    if (binding) players[userId] = { layoutId, overrides: { [buttonId]: binding } };
   }
-  if (Object.keys(migrated).length) savePlayerBindings(migrated);
+  if (Object.keys(players).length) savePlayers(players);
   localStorage.removeItem(LS.legacyBindings);
 }
 
@@ -187,8 +204,8 @@ function migrateLegacyBindings(buttonId: string) {
 const EXPORT_TYPE = "hackbox-keyboard-layout";
 const EXPORT_VERSION = 1;
 
-// Serialize a layout (buttons + labels + default keys) for sharing. Per-player
-// overrides are intentionally omitted.
+// Serialize a layout (buttons + labels + colours + default keys) for sharing.
+// Per-player config is never involved.
 export function exportLayout(layout: Layout): string {
   return JSON.stringify(
     { type: EXPORT_TYPE, version: EXPORT_VERSION, layout },

@@ -330,6 +330,13 @@ textarea:focus {
   gap: 0.7rem;
 }
 
+.layout-assign {
+  margin-left: auto;
+  max-width: 11rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.85rem;
+}
+
 .player-bindings {
   display: flex;
   flex-direction: column;
