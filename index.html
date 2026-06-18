@@ -1,103 +1,135 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hackbox → Keyboard</title>
-    <link rel="stylesheet" href="/src/style.css" />
-  </head>
-  <body>
-    <main id="app">
-      <!-- ===================== Persistent header ===================== -->
-      <header class="appbar">
-        <h1>Hackbox&nbsp;→&nbsp;Keyboard</h1>
-        <div class="room-control">
-          <span id="status-dot" class="dot offline" title="Disconnected"></span>
-          <span id="room-code" class="room-code">————</span>
-          <button
-            id="new-room-btn"
-            class="icon-btn"
-            title="Generate a new room code"
-            aria-label="Generate a new room code"
-          >
-            ↻
-          </button>
-        </div>
-      </header>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Hackbox → Keyboard</title>
+        <link rel="stylesheet" href="/src/style.css" />
+    </head>
+    <body>
+        <main id="app">
+            <!-- ===================== Persistent header ===================== -->
+            <header class="appbar">
+                <h1>Hackbox&nbsp;→&nbsp;Keyboard</h1>
+                <div class="room-control">
+                    <span
+                        id="status-dot"
+                        class="dot offline"
+                        title="Disconnected"
+                    ></span>
+                    <span id="room-code" class="room-code">————</span>
+                    <button
+                        id="new-room-btn"
+                        class="icon-btn"
+                        title="Generate a new room code"
+                        aria-label="Generate a new room code"
+                    >
+                        ↻
+                    </button>
+                </div>
+            </header>
 
-      <!-- ===================== Tabs ===================== -->
-      <nav class="tabs" role="tablist">
-        <button id="tab-players" class="tab" role="tab">Players</button>
-        <button id="tab-layouts" class="tab" role="tab">Layouts</button>
-      </nav>
+            <!-- ===================== Tabs ===================== -->
+            <nav class="tabs" role="tablist">
+                <button id="tab-players" class="tab" role="tab">Players</button>
+                <button id="tab-layouts" class="tab" role="tab">Layouts</button>
+            </nav>
 
-      <!-- ===================== Players ===================== -->
-      <div id="view-players" class="view">
-        <ul id="player-list"></ul>
-        <p id="empty-hint" class="hint">
-          No players yet. Share the room code to let people join. New players start with a blank
-          screen until you assign them a layout.
-        </p>
-      </div>
+            <!-- ===================== Players ===================== -->
+            <div id="view-players" class="view">
+                <ul id="player-list"></ul>
+                <p id="empty-hint" class="hint">
+                    No players yet. Share the room code to let people join. New
+                    players start with a blank screen until you assign them a
+                    layout.
+                </p>
+            </div>
 
-      <!-- ===================== Layouts index ===================== -->
-      <div id="view-layouts" class="view" hidden>
-        <div class="layout-actions">
-          <button id="new-layout-btn" class="primary-btn">+ New layout</button>
-          <button id="import-btn" class="ghost-btn">Import</button>
-        </div>
+            <!-- ===================== Layouts index ===================== -->
+            <div id="view-layouts" class="view" hidden>
+                <div class="layout-actions">
+                    <button id="new-layout-btn" class="primary-btn">
+                        + New layout
+                    </button>
+                    <button id="import-btn" class="ghost-btn">Import</button>
+                </div>
 
-        <ul id="layout-index" class="layout-index"></ul>
-        <p id="layouts-empty-hint" class="hint">
-          No layouts yet. Create one or import a layout a friend shared with you.
-        </p>
-        <p class="hint">Drag the <span class="grip-inline">⠿</span> handle to reorder — this is the order players see in their layout dropdown.</p>
-      </div>
+                <ul id="layout-index" class="layout-index"></ul>
+                <p id="layouts-empty-hint" class="hint">
+                    No layouts yet. Create one or import a layout a friend
+                    shared with you.
+                </p>
+            </div>
 
-      <!-- ===================== Layout editor ===================== -->
-      <div id="view-editor" class="view" hidden>
-        <header class="topbar topbar--nav">
-          <button id="editor-back" class="ghost-btn">← Back</button>
-          <h1>Edit layout</h1>
-        </header>
+            <!-- ===================== Layout editor ===================== -->
+            <div id="view-editor" class="view" hidden>
+                <header class="topbar topbar--nav">
+                    <button id="editor-back" class="ghost-btn">← Back</button>
+                    <h1>Edit layout</h1>
+                </header>
 
-        <label class="field">
-          <span class="field-label">Name</span>
-          <input id="layout-name" type="text" autocomplete="off" />
-        </label>
+                <label class="field">
+                    <span class="field-label">Name</span>
+                    <input id="layout-name" type="text" autocomplete="off" />
+                </label>
 
-        <ul id="layout-buttons" class="layout-buttons"></ul>
-        <button id="add-button-btn" class="ghost-btn">+ Add button</button>
-      </div>
-    </main>
+                <ul id="layout-buttons" class="layout-buttons"></ul>
+                <button id="add-button-btn" class="ghost-btn">
+                    + Add button
+                </button>
+            </div>
+        </main>
 
-    <dialog id="import-dialog">
-      <form method="dialog" class="dialog-body">
-        <h3>Import layout</h3>
-        <p class="hint">Paste a shared layout's JSON, or choose a file you were sent.</p>
-        <textarea id="import-text" rows="8" placeholder="Paste layout JSON here…"></textarea>
-        <input id="import-file" type="file" accept="application/json,.json" />
-        <p id="import-error" class="import-error"></p>
-        <div class="dialog-actions">
-          <button value="cancel" class="ghost-btn">Cancel</button>
-          <button id="import-confirm" value="import" class="primary-btn">Import</button>
-        </div>
-      </form>
-    </dialog>
+        <dialog id="import-dialog">
+            <form method="dialog" class="dialog-body">
+                <h3>Import layout</h3>
+                <p class="hint">
+                    Paste a shared layout's JSON, or choose a file you were
+                    sent.
+                </p>
+                <textarea
+                    id="import-text"
+                    rows="8"
+                    placeholder="Paste layout JSON here…"
+                ></textarea>
+                <input
+                    id="import-file"
+                    type="file"
+                    accept="application/json,.json"
+                />
+                <p id="import-error" class="import-error"></p>
+                <div class="dialog-actions">
+                    <button value="cancel" class="ghost-btn">Cancel</button>
+                    <button
+                        id="import-confirm"
+                        value="import"
+                        class="primary-btn"
+                    >
+                        Import
+                    </button>
+                </div>
+            </form>
+        </dialog>
 
-    <dialog id="confirm-dialog">
-      <form method="dialog" class="dialog-body">
-        <h3 id="confirm-title">Are you sure?</h3>
-        <p id="confirm-message" class="hint"></p>
-        <div class="dialog-actions">
-          <button value="cancel" class="ghost-btn">Cancel</button>
-          <button id="confirm-ok" value="confirm" class="ghost-btn danger">Delete</button>
-        </div>
-      </form>
-    </dialog>
+        <dialog id="confirm-dialog">
+            <form method="dialog" class="dialog-body">
+                <h3 id="confirm-title">Are you sure?</h3>
+                <p id="confirm-message" class="hint"></p>
+                <div class="dialog-actions">
+                    <button value="cancel" class="ghost-btn">Cancel</button>
+                    <button
+                        id="confirm-ok"
+                        value="confirm"
+                        class="ghost-btn danger"
+                    >
+                        Delete
+                    </button>
+                </div>
+            </form>
+        </dialog>
 
-    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+        <script type="module" src="/src/main.ts"></script>
+    </body>
 </html>

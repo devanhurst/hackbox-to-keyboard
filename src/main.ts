@@ -31,6 +31,7 @@ import {
 
 const LS = {
   hostId: "h2k.hostId",
+  playerOrder: "h2k.playerOrder", // host's chosen roster order, userIds
 } as const;
 
 // Fixed Hackbox deployment. The HTTP API is served under /api and the realtime
@@ -64,6 +65,39 @@ interface Member {
 let layouts: Layout[] = loadLayouts();
 let editingLayoutId: string | null = getEditingLayoutId();
 let players: Players = loadPlayers();
+let playerOrder: string[] = loadPlayerOrder(); // host-chosen roster order
+
+function loadPlayerOrder(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS.playerOrder) || "[]");
+    return Array.isArray(raw)
+      ? raw.filter((x): x is string => typeof x === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePlayerOrder() {
+  localStorage.setItem(LS.playerOrder, JSON.stringify(playerOrder));
+}
+
+// Roster in the host's chosen order: ids in `playerOrder` first, then any member
+// not yet ordered appended alphabetically (and added to `playerOrder` so their
+// spot is stable from then on). Stale ids that aren't online linger harmlessly.
+function orderedMembers(): Member[] {
+  const all = Object.values(members);
+  const known = new Set(playerOrder);
+  const newcomers = all
+    .filter((m) => !known.has(m.id))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (newcomers.length) {
+    playerOrder = [...playerOrder, ...newcomers.map((m) => m.id)];
+    savePlayerOrder();
+  }
+  const rank = new Map(playerOrder.map((id, i) => [id, i]));
+  return all.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+}
 
 let socket: HackboxSocket | null = null;
 let members: Record<string, Member> = {};
@@ -88,7 +122,9 @@ let capture: CaptureTarget | null = null;
 
 // The layout currently open in the editor (null if none / deleted).
 function editingLayout(): Layout | undefined {
-  return editingLayoutId ? layouts.find((l) => l.id === editingLayoutId) : undefined;
+  return editingLayoutId
+    ? layouts.find((l) => l.id === editingLayoutId)
+    : undefined;
 }
 
 function layoutById(id: string | null | undefined): Layout | undefined {
@@ -135,7 +171,9 @@ const el = {
   newLayoutBtn: document.getElementById("new-layout-btn") as HTMLButtonElement,
   importBtn: document.getElementById("import-btn") as HTMLButtonElement,
   layoutIndex: document.getElementById("layout-index") as HTMLUListElement,
-  layoutsEmptyHint: document.getElementById("layouts-empty-hint") as HTMLParagraphElement,
+  layoutsEmptyHint: document.getElementById(
+    "layouts-empty-hint",
+  ) as HTMLParagraphElement,
   // editor view
   editorBack: document.getElementById("editor-back") as HTMLButtonElement,
   layoutName: document.getElementById("layout-name") as HTMLInputElement,
@@ -150,7 +188,9 @@ const el = {
   // confirm dialog
   confirmDialog: document.getElementById("confirm-dialog") as HTMLDialogElement,
   confirmTitle: document.getElementById("confirm-title") as HTMLHeadingElement,
-  confirmMessage: document.getElementById("confirm-message") as HTMLParagraphElement,
+  confirmMessage: document.getElementById(
+    "confirm-message",
+  ) as HTMLParagraphElement,
   confirmOk: document.getElementById("confirm-ok") as HTMLButtonElement,
   toast: document.getElementById("toast") as HTMLDivElement,
 };
@@ -327,12 +367,16 @@ function renderLayoutIndexRow(layout: Layout): HTMLLIElement {
   actions.append(edit, dup, exp, del);
 
   li.append(grip, meta, actions);
-  wireRowDrag(li, grip);
+  wireRowDrag(li, grip, commitIndexOrder);
   return li;
 }
 
 // A square icon button (monochrome glyph) with an accessible label/tooltip.
-function iconButton(glyph: string, label: string, danger = false): HTMLButtonElement {
+function iconButton(
+  glyph: string,
+  label: string,
+  danger = false,
+): HTMLButtonElement {
   const b = document.createElement("button");
   b.className = "icon-btn" + (danger ? " danger" : "");
   b.textContent = glyph;
@@ -347,9 +391,14 @@ function iconButton(glyph: string, label: string, danger = false): HTMLButtonEle
 // during dragover; on drop we rebuild the `layouts` array from the DOM order.
 //
 // The row is only `draggable` while the pointer is pressed on the grip handle,
-// so a drag can only start from the handle and clicks on the row's own buttons
-// (Edit/Delete) aren't swallowed by an accidental drag.
-function wireRowDrag(li: HTMLLIElement, grip: HTMLElement) {
+// so a drag can only start from the handle and clicks on the row's own controls
+// (buttons, dropdowns) aren't swallowed by an accidental drag. `onCommit` runs
+// on drop to persist the new order.
+function wireRowDrag(
+  li: HTMLLIElement,
+  grip: HTMLElement,
+  onCommit: () => void,
+) {
   const disarm = () => {
     li.draggable = false;
   };
@@ -368,30 +417,42 @@ function wireRowDrag(li: HTMLLIElement, grip: HTMLElement) {
   li.addEventListener("dragend", () => {
     li.classList.remove("dragging");
     disarm();
-    commitIndexOrder();
+    onCommit();
   });
 }
 
-el.layoutIndex.addEventListener("dragover", (e) => {
-  e.preventDefault();
-  // WebKit (the Tauri macOS WebView) only treats a target as a valid drop zone
-  // when dropEffect is set to match the drag's effectAllowed ("move"); without
-  // this it shows the no-drop cursor and rejects every position.
-  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-  const dragging = el.layoutIndex.querySelector(".dragging") as HTMLElement | null;
-  if (!dragging) return;
-  const after = dragAfterElement(el.layoutIndex, e.clientY);
-  if (after == null) el.layoutIndex.appendChild(dragging);
-  else el.layoutIndex.insertBefore(dragging, after);
-});
+// Wire a list container so its `.dragging` child follows the pointer during a
+// drag (rows matched by `rowSelector`). Shared by the layouts and players lists.
+function wireContainerDrag(container: HTMLElement, rowSelector: string) {
+  container.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    // WebKit (the Tauri macOS WebView) only treats a target as a valid drop zone
+    // when dropEffect is set to match the drag's effectAllowed ("move"); without
+    // this it shows the no-drop cursor and rejects every position.
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    const dragging = container.querySelector(".dragging") as HTMLElement | null;
+    if (!dragging) return;
+    const after = dragAfterElement(container, e.clientY, rowSelector);
+    if (after == null) container.appendChild(dragging);
+    else container.insertBefore(dragging, after);
+  });
+  // Accept the drop so the row settles in place (and WebKit fires `dragend`
+  // normally) rather than animating back to its origin. Order commits on
+  // `dragend`, which fires after this.
+  container.addEventListener("drop", (e) => e.preventDefault());
+}
 
-// Accept the drop so the row settles in place (and WebKit fires `dragend`
-// normally) rather than animating back to its origin. Order is committed on
-// `dragend`, which fires after this.
-el.layoutIndex.addEventListener("drop", (e) => e.preventDefault());
+wireContainerDrag(el.layoutIndex, ".layout-index-row");
+wireContainerDrag(el.playerList, ".player");
 
-function dragAfterElement(container: HTMLElement, y: number): HTMLElement | null {
-  const rows = [...container.querySelectorAll<HTMLElement>(".layout-index-row:not(.dragging)")];
+function dragAfterElement(
+  container: HTMLElement,
+  y: number,
+  rowSelector: string,
+): HTMLElement | null {
+  const rows = [
+    ...container.querySelectorAll<HTMLElement>(`${rowSelector}:not(.dragging)`),
+  ];
   let closest: { offset: number; element: HTMLElement | null } = {
     offset: Number.NEGATIVE_INFINITY,
     element: null,
@@ -399,7 +460,8 @@ function dragAfterElement(container: HTMLElement, y: number): HTMLElement | null
   for (const row of rows) {
     const box = row.getBoundingClientRect();
     const offset = y - box.top - box.height / 2;
-    if (offset < 0 && offset > closest.offset) closest = { offset, element: row };
+    if (offset < 0 && offset > closest.offset)
+      closest = { offset, element: row };
   }
   return closest.element;
 }
@@ -407,16 +469,29 @@ function dragAfterElement(container: HTMLElement, y: number): HTMLElement | null
 // Re-derive layout order from the current DOM, persist it, and refresh the
 // player dropdowns (which list layouts in this order).
 function commitIndexOrder() {
-  const order = [...el.layoutIndex.querySelectorAll<HTMLElement>(".layout-index-row")].map(
-    (li) => li.dataset.id,
-  );
+  const order = [
+    ...el.layoutIndex.querySelectorAll<HTMLElement>(".layout-index-row"),
+  ].map((li) => li.dataset.id);
   const byId = new Map(layouts.map((l) => [l.id, l]));
-  const reordered = order.map((id) => byId.get(id!)).filter(Boolean) as Layout[];
+  const reordered = order
+    .map((id) => byId.get(id!))
+    .filter(Boolean) as Layout[];
   if (reordered.length !== layouts.length) return; // safety: don't lose any
   const changed = reordered.some((l, i) => l.id !== layouts[i].id);
   if (!changed) return;
   layouts = reordered;
   persistLayouts();
+}
+
+// Re-derive roster order from the current DOM and persist it. Visible cards take
+// the new order; any ids in `playerOrder` not currently shown keep trailing.
+function commitPlayerOrder() {
+  const ids = [...el.playerList.querySelectorAll<HTMLElement>(".player")]
+    .map((li) => li.dataset.id)
+    .filter((id): id is string => !!id);
+  const shown = new Set(ids);
+  playerOrder = [...ids, ...playerOrder.filter((id) => !shown.has(id))];
+  savePlayerOrder();
 }
 
 // ---------------------------------------------------------------------------
@@ -492,16 +567,18 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
   playerLbl.className = "lbr-key-label";
   playerLbl.textContent = "Player presses";
   const playerBtn = document.createElement("button");
-  playerBtn.className =
-    `key-btn${playerCapturing ? " capturing" : ""}${button.playerKey ? "" : " unset"}`;
+  playerBtn.className = `key-btn${playerCapturing ? " capturing" : ""}${button.playerKey ? "" : " unset"}`;
   playerBtn.textContent = playerCapturing
     ? "Press a key…"
     : button.playerKey
       ? playerKeyLabel(button.playerKey)
       : "Tap only";
-  playerBtn.title = "Key the player presses on their OWN device to fire this button";
+  playerBtn.title =
+    "Key the player presses on their OWN device to fire this button";
   playerBtn.addEventListener("click", () => {
-    capture = playerCapturing ? null : { kind: "playerKey", buttonId: button.id };
+    capture = playerCapturing
+      ? null
+      : { kind: "playerKey", buttonId: button.id };
     renderEditor();
   });
   playerField.append(playerLbl, playerBtn);
@@ -516,7 +593,8 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
   }
 
   // Default host key.
-  const hostCapturing = capture?.kind === "default" && capture.buttonId === button.id;
+  const hostCapturing =
+    capture?.kind === "default" && capture.buttonId === button.id;
   const hostField = document.createElement("div");
   hostField.className = "lbr-key";
   const hostLbl = document.createElement("span");
@@ -547,7 +625,7 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
 // ---------------------------------------------------------------------------
 
 function renderPlayers() {
-  const list = Object.values(members).sort((a, b) => a.name.localeCompare(b.name));
+  const list = orderedMembers();
   el.emptyHint.style.display = list.length ? "none" : "block";
   el.playerList.innerHTML = "";
 
@@ -561,13 +639,19 @@ function renderPlayerCard(member: Member): HTMLLIElement {
   li.className = "player" + (member.online ? "" : " offline");
   li.dataset.id = member.id;
 
-  // Header: status dot, name, and the per-player layout assignment.
+  // Header: drag grip, status dot, name, and the per-player layout assignment.
   const head = document.createElement("div");
   head.className = "player-head";
   head.innerHTML = `
     <span class="player-dot ${member.online ? "online" : "offline"}"></span>
     <span class="player-name">${escapeHtml(member.name)}</span>
   `;
+
+  const grip = document.createElement("span");
+  grip.className = "grip";
+  grip.textContent = "⠿";
+  grip.title = "Drag to reorder";
+  head.prepend(grip);
 
   const select = document.createElement("select");
   select.className = "layout-assign";
@@ -600,10 +684,14 @@ function renderPlayerCard(member: Member): HTMLLIElement {
     li.appendChild(grid);
   }
 
+  wireRowDrag(li, grip, commitPlayerOrder);
   return li;
 }
 
-function renderPlayerBinding(member: Member, button: ButtonDef): HTMLDivElement {
+function renderPlayerBinding(
+  member: Member,
+  button: ButtonDef,
+): HTMLDivElement {
   const wrap = document.createElement("div");
   wrap.className = "binding";
 
@@ -695,7 +783,8 @@ function addButton() {
 function removeButton(layout: Layout, buttonId: string) {
   layout.buttons = layout.buttons.filter((b) => b.id !== buttonId);
   // Drop any per-player overrides for the removed button.
-  for (const config of Object.values(players)) delete config.overrides[buttonId];
+  for (const config of Object.values(players))
+    delete config.overrides[buttonId];
   persistLayouts();
   savePlayers(players);
   renderEditor();
@@ -833,7 +922,9 @@ window.addEventListener("keydown", (e) => {
   const binding: Binding = { modifiers: ordered, code: e.code };
 
   if (capture.kind === "default") {
-    const button = editingLayout()?.buttons.find((b) => b.id === capture!.buttonId);
+    const button = editingLayout()?.buttons.find(
+      (b) => b.id === capture!.buttonId,
+    );
     if (button) {
       button.binding = binding;
       persistLayouts();
@@ -1062,13 +1153,7 @@ async function exportLayoutFile(layout: Layout) {
   a.click();
   URL.revokeObjectURL(url);
 
-  // …and copy to the clipboard for quick pasting.
-  try {
-    await navigator.clipboard.writeText(json);
-    toast("Layout copied to clipboard & downloaded");
-  } catch {
-    toast("Layout downloaded");
-  }
+  toast("Layout downloaded");
 }
 
 function openImport() {

@@ -89,11 +89,13 @@ export function duplicateLayout(layout: Layout, name: string): Layout {
 }
 
 function defaultLayout(): Layout {
-  // A simple starting template mirroring the original single full-screen button.
+  // Ships with the app as a ready-to-use starting point: a single red BUZZ
+  // button the player fires with the spacebar (" " is the KeyboardEvent.key for
+  // Space), with no host key bound by default.
   return {
     id: uid(),
-    name: "Single Button",
-    buttons: [{ id: "press", label: "PRESS", color: DEFAULT_COLOR, binding: null, playerKey: null }],
+    name: "Buzzer",
+    buttons: [{ id: uid(), label: "BUZZ", color: "#ef4444", binding: null, playerKey: " " }],
   };
 }
 
