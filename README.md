@@ -75,6 +75,8 @@ normal Hackbox client.
 **+ Add button**. For each button set its label, colour, and a **Default key**
 (the key it fires unless a player overrides it). Use the **+** next to the picker
 to create more layouts; switch which one you're editing with the dropdown.
+**Duplicate** clones the current layout (fresh button ids) — the quick way to
+build a near-identical variant like "Duel P2" from "Duel P1".
 
 **Assign per player.** Under **Players**, each player has a **layout dropdown**.
 New players start on **No layout** (a blank screen) until you pick one — and you

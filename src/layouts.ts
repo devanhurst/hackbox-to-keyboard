@@ -66,6 +66,22 @@ export function newButton(label = "Button", color = DEFAULT_COLOR): ButtonDef {
   return { id: uid(), label, color, binding: null };
 }
 
+// Clone a layout into an independent copy: fresh layout id and fresh button ids
+// (so per-player overrides, which are keyed by buttonId, never bleed between the
+// original and the copy). Default keys, labels, and colours are preserved.
+export function duplicateLayout(layout: Layout, name: string): Layout {
+  return {
+    id: uid(),
+    name,
+    buttons: layout.buttons.map((b) => ({
+      id: uid(),
+      label: b.label,
+      color: b.color,
+      binding: b.binding ? { ...b.binding, modifiers: [...b.binding.modifiers] } : null,
+    })),
+  };
+}
+
 function defaultLayout(): Layout {
   // A simple starting template mirroring the original single full-screen button.
   return {

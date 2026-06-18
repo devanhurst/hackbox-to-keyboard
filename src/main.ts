@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emptyState, layoutState } from "./memberState";
 import { createHackboxSocket, type HackboxSocket } from "./hackboxSocket";
 import {
+  duplicateLayout,
   exportLayout,
   getEditingLayoutId,
   importLayout,
@@ -126,6 +127,7 @@ const el = {
   layoutName: document.getElementById("layout-name") as HTMLInputElement,
   layoutButtons: document.getElementById("layout-buttons") as HTMLUListElement,
   addButtonBtn: document.getElementById("add-button-btn") as HTMLButtonElement,
+  duplicateLayoutBtn: document.getElementById("duplicate-layout-btn") as HTMLButtonElement,
   exportBtn: document.getElementById("export-btn") as HTMLButtonElement,
   importBtn: document.getElementById("import-btn") as HTMLButtonElement,
   deleteLayoutBtn: document.getElementById("delete-layout-btn") as HTMLButtonElement,
@@ -456,6 +458,20 @@ function createLayout() {
   render(); // players panel needs the new layout in its assignment dropdowns
   el.layoutName.focus();
   el.layoutName.select();
+}
+
+function duplicateCurrentLayout() {
+  const source = editingLayout();
+  const copy = duplicateLayout(source, `${source.name} copy`);
+  layouts.push(copy);
+  persistLayouts();
+  editingLayoutId = copy.id;
+  setEditingLayoutId(copy.id);
+  capture = null;
+  render(); // players panel needs the new layout in its assignment dropdowns
+  el.layoutName.focus();
+  el.layoutName.select();
+  toast(`Duplicated "${source.name}"`);
 }
 
 function deleteLayout() {
@@ -793,6 +809,7 @@ el.layoutName.addEventListener("input", () => {
   }
 });
 el.addButtonBtn.addEventListener("click", () => addButton());
+el.duplicateLayoutBtn.addEventListener("click", () => duplicateCurrentLayout());
 el.exportBtn.addEventListener("click", () => void doExport());
 el.importBtn.addEventListener("click", () => openImport());
 el.deleteLayoutBtn.addEventListener("click", () => deleteLayout());
