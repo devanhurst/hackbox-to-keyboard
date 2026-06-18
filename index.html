@@ -33,12 +33,55 @@
         </div>
       </section>
 
+      <section class="layout">
+        <div class="section-head">
+          <h2>Layout</h2>
+          <div class="layout-picker">
+            <select id="layout-select" aria-label="Active layout"></select>
+            <button id="new-layout-btn" class="icon-btn" title="New layout" aria-label="New layout">
+              +
+            </button>
+          </div>
+        </div>
+
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input id="layout-name" type="text" autocomplete="off" />
+        </label>
+
+        <ul id="layout-buttons" class="layout-buttons"></ul>
+        <button id="add-button-btn" class="ghost-btn">+ Add button</button>
+
+        <div class="layout-actions">
+          <button id="export-btn" class="ghost-btn">Export</button>
+          <button id="import-btn" class="ghost-btn">Import</button>
+          <button id="delete-layout-btn" class="ghost-btn danger">Delete layout</button>
+        </div>
+      </section>
+
       <section class="players">
         <h2>Players</h2>
         <ul id="player-list"></ul>
         <p id="empty-hint" class="hint">No players yet. Share the room code to let people join.</p>
       </section>
     </main>
+
+    <dialog id="import-dialog">
+      <form method="dialog" class="dialog-body">
+        <h3>Import layout</h3>
+        <p class="hint">Paste a shared layout's JSON, or choose a file you were sent.</p>
+        <textarea id="import-text" rows="8" placeholder="Paste layout JSON here…"></textarea>
+        <input id="import-file" type="file" accept="application/json,.json" />
+        <p id="import-error" class="import-error"></p>
+        <div class="dialog-actions">
+          <button value="cancel" class="ghost-btn">Cancel</button>
+          <button id="import-confirm" value="import" class="primary-btn">Import</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

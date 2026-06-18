@@ -127,6 +127,167 @@ button {
   font: inherit;
 }
 
+/* --- Layout editor ------------------------------------------------------ */
+
+.layout {
+  margin-top: 1.5rem;
+  background: var(--panel);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.section-head h2 {
+  font-size: 0.9rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05rem;
+  margin: 0;
+}
+
+.layout-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+select,
+input[type="text"],
+textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid #3a3a47;
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.6rem;
+}
+select:focus,
+input[type="text"]:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.field-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.field input {
+  width: 100%;
+}
+
+.layout-buttons {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.layout-button-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.color-input {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid #3a3a47;
+  border-radius: 0.5rem;
+  background: var(--panel-2);
+  flex: none;
+}
+
+.label-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.key-btn {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid #3a3a47;
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.7rem;
+  min-width: 6rem;
+  font-weight: 600;
+  flex: none;
+}
+.key-btn.unset {
+  color: var(--muted);
+  font-weight: 400;
+}
+.key-btn.capturing {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ghost-btn {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid #3a3a47;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.9rem;
+  font-weight: 600;
+}
+.ghost-btn:hover {
+  border-color: var(--accent);
+}
+.ghost-btn.danger {
+  color: #f87171;
+}
+.ghost-btn.danger:hover {
+  border-color: #f87171;
+}
+.ghost-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.primary-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.9rem;
+  font-weight: 700;
+}
+
+.icon-btn.danger {
+  color: #f87171;
+}
+.icon-btn.danger:hover {
+  border-color: #f87171;
+}
+
+.layout-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+/* --- Players ------------------------------------------------------------ */
+
 .players {
   margin-top: 1.5rem;
 }
@@ -149,8 +310,8 @@ button {
 
 .player {
   display: flex;
-  align-items: center;
-  gap: 0.7rem;
+  flex-direction: column;
+  gap: 0.6rem;
   background: var(--panel);
   border-radius: 0.6rem;
   padding: 0.7rem 0.85rem;
@@ -161,6 +322,50 @@ button {
 }
 .player.hit {
   animation: hit 0.4s ease-out;
+}
+
+.player-head {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.player-bindings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.binding {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.binding-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.binding .bind-btn.override {
+  border-color: var(--accent);
+}
+
+.reset-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1rem;
+  padding: 0.2rem 0.3rem;
+  flex: none;
+}
+.reset-btn:hover {
+  color: var(--text);
 }
 
 @keyframes hit {
@@ -210,4 +415,71 @@ button {
 .hint {
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+/* --- Import dialog ------------------------------------------------------ */
+
+dialog {
+  border: 1px solid #3a3a47;
+  border-radius: 0.75rem;
+  background: var(--panel);
+  color: var(--text);
+  padding: 0;
+  max-width: 480px;
+  width: calc(100% - 2rem);
+}
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.dialog-body {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.dialog-body h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.dialog-body textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+}
+
+.import-error {
+  color: #f87171;
+  font-size: 0.85rem;
+  margin: 0;
+  min-height: 1rem;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+/* --- Toast -------------------------------------------------------------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  transform: translate(-50%, 1rem);
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid #3a3a47;
+  border-radius: 0.6rem;
+  padding: 0.6rem 1rem;
+  font-size: 0.85rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+}
+.toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }

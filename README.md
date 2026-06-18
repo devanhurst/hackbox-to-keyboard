@@ -1,9 +1,16 @@
 # Hackbox → Keyboard
 
 A desktop [Tauri](https://tauri.app) app that joins a Hackbox room **as the host**,
-shows each connected player a single button, and casts that button press to an
-**OS-level keypress** on the host machine — so player taps can drive any game or
-app, not just the browser.
+shows each connected player a **custom layout of buttons**, and casts each button
+press to an **OS-level keypress** on the host machine — so player taps can drive
+any game or app, not just the browser.
+
+Build a layout with any number of buttons, give each one a label and a colour,
+and map it to a key. The same layout drives every player, but each button's key
+can be **overridden per-player** — so in a game like "Duel" both players can see
+the same six buttons (four answers, accelerate, lock-in) while each player's
+buttons fire different keys. Save as many layouts as you like and
+**export/import** them as JSON to share with friends.
 
 This is the cross-platform answer to the Windows-only Unity version: the web UI
 lives in a WebView, and key injection is done in Rust via
@@ -18,18 +25,33 @@ lives in a WebView, and key injection is done in Rust via
    [`partysocket`](https://www.npmjs.com/package/partysocket). The relay treats
    any connection whose `userId` equals the room's `hostId` as the host, so this
    app *is* the host. Frames are JSON envelopes `{ type, payload }`.
-3. It pushes a single full-screen `Button` view to every player who joins.
-4. When a player taps, the relay forwards a `msg` frame. The app looks up that
-   player's key binding and calls the `press_key` Rust command, which uses
-   `enigo` to tap the key system-wide. It then re-pushes the button to re-arm it.
+3. It pushes the active layout — a stack of `Button` components, one per button —
+   to every player who joins. Each button's `event` is its stable id, so the host
+   can map a tap back to the right key. (The hackbox player view renders the main
+   area as a single column, so buttons stack vertically and are auto-sized to
+   share the screen.)
+4. When a player taps, the relay forwards a `msg` frame carrying the button's id.
+   The app resolves the binding for that player+button (the per-player override
+   if set, otherwise the button's default) and calls the `press_key` Rust
+   command, which uses `enigo` to tap the key system-wide. It then re-pushes the
+   layout to re-arm the buttons.
 
 Hackbox migrated from socket.io to a Cloudflare relay (a Durable Object speaking
 raw WebSocket); the connector in [`src/hackboxSocket.ts`](src/hackboxSocket.ts)
 is ported from the hackbox client SDK and re-exposes a small `on`/`emit` surface
 over that envelope protocol, plus a `"ping"`/`"pong"` keepalive.
 
-Bindings (player → key) are stored in `localStorage`, keyed by `KeyboardEvent.code`
-(physical key), so layouts and game scancode reads behave predictably.
+Layouts and bindings are stored in `localStorage`. Bindings are keyed by
+`KeyboardEvent.code` (physical key), so layouts and game scancode reads behave
+predictably. The data model lives in [`src/layouts.ts`](src/layouts.ts):
+
+- **Layouts** — a named list of buttons (`{ id, name, buttons }`). Each button has
+  a `label`, `color`, and an optional **default** `binding`.
+- **Per-player overrides** — `userId → (buttonId → binding)`, layered over the
+  button's default so the same layout can fire different keys for each player.
+- **Export/import** — `exportLayout`/`importLayout` (de)serialize a layout as
+  JSON (`{ type: "hackbox-keyboard-layout", version, layout }`). Per-player
+  overrides are *not* exported — they're tied to specific userIds on this machine.
 
 ## Develop
 
@@ -40,9 +62,24 @@ npm run tauri dev
 
 On launch the app creates a room against `https://hackbox.ca` automatically and
 shows the room code — no configuration. Share that code; players join with the
-normal Hackbox client. For each player, click **Set key** and press the key — or
-modifier combo (e.g. Shift+J, Ctrl+Cmd+Space) — you want their button mapped to.
-Hold the modifiers and press the main key; Esc cancels capture.
+normal Hackbox client.
+
+**Build a layout.** In the **Layout** panel, name your layout and add buttons
+with **+ Add button**. For each button set its label, colour, and a **Default
+key** (the key all players' copies of that button fire). Use the **+** next to
+the layout picker to create more layouts; switch between them with the dropdown.
+
+**Set keys.** Click a key field and press the key — or modifier combo (e.g.
+Shift+J, Ctrl+Cmd+Space). Hold the modifiers and press the main key; Esc cancels
+capture. Under each player, every button shows its effective key; click one to
+set a **per-player override** (shown highlighted) and use **↺** to revert it to
+the layout default.
+
+**Share.** **Export** copies the active layout's JSON to the clipboard and
+downloads a `.hackboxkb.json` file; **Import** accepts pasted JSON or a file.
+
+The host is hardcoded ([`SERVER_URL` in `src/main.ts`](src/main.ts)); change it
+there to point at a local backend (api on `:8787`, relay on `:1999`) for dev.
 
 The host is hardcoded ([`SERVER_URL` in `src/main.ts`](src/main.ts)); change it
 there to point at a local backend (api on `:8787`, relay on `:1999`) for dev.

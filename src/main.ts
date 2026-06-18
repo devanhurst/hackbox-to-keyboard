@@ -1,9 +1,26 @@
 import { invoke } from "@tauri-apps/api/core";
-import { buttonState } from "./memberState";
+import { layoutState } from "./memberState";
 import { createHackboxSocket, type HackboxSocket } from "./hackboxSocket";
+import {
+  exportLayout,
+  getActiveLayoutId,
+  importLayout,
+  loadLayouts,
+  loadPlayerBindings,
+  MODIFIER_ORDER,
+  newButton,
+  saveLayouts,
+  savePlayerBindings,
+  setActiveLayoutId,
+  type Binding,
+  type ButtonDef,
+  type Layout,
+  type Modifier,
+  type PlayerBindings,
+} from "./layouts";
 
 // ---------------------------------------------------------------------------
-// Persistent identity + config
+// Persistent identity
 //
 // The server treats any socket whose handshake `userId` equals the room's
 // `hostId` as the host (see server RoomService.joinRoom). So we persist a
@@ -13,7 +30,6 @@ import { createHackboxSocket, type HackboxSocket } from "./hackboxSocket";
 const LS = {
   hostId: "h2k.hostId",
   roomCode: "h2k.roomCode",
-  bindings: "h2k.bindings",
 } as const;
 
 // Fixed Hackbox deployment. The HTTP API is served under /api and the realtime
@@ -34,48 +50,9 @@ function getHostId(): string {
 
 const hostId = getHostId();
 
-// A binding is a main key (KeyboardEvent.code, e.g. "KeyA") plus zero or more
-// modifiers held down around it.
-type Modifier = "Control" | "Alt" | "Shift" | "Meta";
-interface Binding {
-  modifiers: Modifier[];
-  code: string;
-}
-// userId -> Binding
-type Bindings = Record<string, Binding>;
-
-const MODIFIER_ORDER: Modifier[] = ["Control", "Alt", "Shift", "Meta"];
-
-function loadBindings(): Bindings {
-  let raw: Record<string, unknown>;
-  try {
-    raw = JSON.parse(localStorage.getItem(LS.bindings) || "{}");
-  } catch {
-    return {};
-  }
-  const out: Bindings = {};
-  for (const [id, v] of Object.entries(raw)) {
-    // Migrate the old shape (plain "KeyA" string) to { modifiers, code }.
-    if (typeof v === "string") {
-      out[id] = { modifiers: [], code: v };
-    } else if (v && typeof v === "object" && typeof (v as Binding).code === "string") {
-      const b = v as Binding;
-      out[id] = {
-        code: b.code,
-        modifiers: Array.isArray(b.modifiers)
-          ? MODIFIER_ORDER.filter((m) => b.modifiers.includes(m))
-          : [],
-      };
-    }
-  }
-  return out;
-}
-
-function saveBindings(b: Bindings) {
-  localStorage.setItem(LS.bindings, JSON.stringify(b));
-}
-
-const bindings = loadBindings();
+// ---------------------------------------------------------------------------
+// App state
+// ---------------------------------------------------------------------------
 
 interface Member {
   id: string;
@@ -83,10 +60,42 @@ interface Member {
   online: boolean;
 }
 
+let layouts: Layout[] = loadLayouts();
+let activeLayoutId: string = resolveActiveLayoutId();
+let playerBindings: PlayerBindings = loadPlayerBindings();
+
 let socket: HackboxSocket | null = null;
 let members: Record<string, Member> = {};
-const initialized = new Set<string>(); // players we've pushed the button UI to
-let capturingFor: string | null = null; // userId awaiting a key capture
+const initialized = new Set<string>(); // players we've pushed the layout to
+
+// What a key capture, if any, is targeting: a button's default key, or a
+// specific player's override of a button.
+type CaptureTarget =
+  | { kind: "default"; buttonId: string }
+  | { kind: "player"; userId: string; buttonId: string };
+let capture: CaptureTarget | null = null;
+
+function resolveActiveLayoutId(): string {
+  const stored = getActiveLayoutId();
+  if (stored && layouts.some((l) => l.id === stored)) return stored;
+  const id = layouts[0].id;
+  setActiveLayoutId(id);
+  return id;
+}
+
+function activeLayout(): Layout {
+  return layouts.find((l) => l.id === activeLayoutId) ?? layouts[0];
+}
+
+function persistLayouts() {
+  saveLayouts(layouts);
+}
+
+// The binding that actually fires for a player's button: their override if set,
+// otherwise the button's default.
+function effectiveBinding(userId: string, button: ButtonDef): Binding | null {
+  return playerBindings[userId]?.[button.id] ?? button.binding;
+}
 
 // ---------------------------------------------------------------------------
 // DOM
@@ -97,14 +106,38 @@ const el = {
   newRoomBtn: document.getElementById("new-room-btn") as HTMLButtonElement,
   statusDot: document.getElementById("status-dot") as HTMLSpanElement,
   statusText: document.getElementById("status-text") as HTMLSpanElement,
+  layoutSelect: document.getElementById("layout-select") as HTMLSelectElement,
+  newLayoutBtn: document.getElementById("new-layout-btn") as HTMLButtonElement,
+  layoutName: document.getElementById("layout-name") as HTMLInputElement,
+  layoutButtons: document.getElementById("layout-buttons") as HTMLUListElement,
+  addButtonBtn: document.getElementById("add-button-btn") as HTMLButtonElement,
+  exportBtn: document.getElementById("export-btn") as HTMLButtonElement,
+  importBtn: document.getElementById("import-btn") as HTMLButtonElement,
+  deleteLayoutBtn: document.getElementById("delete-layout-btn") as HTMLButtonElement,
   playerList: document.getElementById("player-list") as HTMLUListElement,
   emptyHint: document.getElementById("empty-hint") as HTMLParagraphElement,
+  importDialog: document.getElementById("import-dialog") as HTMLDialogElement,
+  importText: document.getElementById("import-text") as HTMLTextAreaElement,
+  importFile: document.getElementById("import-file") as HTMLInputElement,
+  importError: document.getElementById("import-error") as HTMLParagraphElement,
+  importConfirm: document.getElementById("import-confirm") as HTMLButtonElement,
+  toast: document.getElementById("toast") as HTMLDivElement,
 };
 
 function setStatus(state: "online" | "offline" | "connecting", text: string) {
   el.statusDot.className = `dot ${state}`;
   el.statusText.textContent = text;
 }
+
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
+function toast(message: string) {
+  el.toast.textContent = message;
+  el.toast.classList.add("show");
+  if (toastTimer !== null) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.toast.classList.remove("show"), 2200);
+}
+
+// --- key labelling --------------------------------------------------------
 
 // Human-friendly label for a KeyboardEvent.code.
 function keyLabel(code: string): string {
@@ -136,7 +169,97 @@ function bindingLabel(b: Binding): string {
   return [...b.modifiers.map((m) => MOD_LABEL[m]), keyLabel(b.code)].join("+");
 }
 
-function render() {
+function escapeHtml(s: string): string {
+  const div = document.createElement("div");
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+// ---------------------------------------------------------------------------
+// Render: layout editor
+// ---------------------------------------------------------------------------
+
+function renderLayoutPanel() {
+  const layout = activeLayout();
+
+  // Layout picker.
+  el.layoutSelect.innerHTML = "";
+  for (const l of layouts) {
+    const opt = document.createElement("option");
+    opt.value = l.id;
+    opt.textContent = l.name || "Untitled";
+    opt.selected = l.id === layout.id;
+    el.layoutSelect.appendChild(opt);
+  }
+
+  el.layoutName.value = layout.name;
+  el.deleteLayoutBtn.disabled = layouts.length <= 1;
+
+  // Button editor rows.
+  el.layoutButtons.innerHTML = "";
+  layout.buttons.forEach((button) => {
+    el.layoutButtons.appendChild(renderButtonRow(layout, button));
+  });
+}
+
+function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className = "layout-button-row";
+
+  const color = document.createElement("input");
+  color.type = "color";
+  color.className = "color-input";
+  color.value = button.color;
+  color.title = "Button colour";
+  color.addEventListener("input", () => {
+    button.color = color.value;
+    persistLayouts();
+    scheduleRepushAll();
+  });
+
+  const label = document.createElement("input");
+  label.type = "text";
+  label.className = "label-input";
+  label.value = button.label;
+  label.placeholder = "Button label";
+  label.addEventListener("input", () => {
+    button.label = label.value;
+    persistLayouts();
+    scheduleRepushAll();
+  });
+
+  const isCapturing = capture?.kind === "default" && capture.buttonId === button.id;
+  const keyBtn = document.createElement("button");
+  keyBtn.className = `key-btn${isCapturing ? " capturing" : ""}${button.binding ? "" : " unset"}`;
+  keyBtn.textContent = isCapturing
+    ? "Press keys…"
+    : button.binding
+      ? bindingLabel(button.binding)
+      : "Default key";
+  keyBtn.title = "Default key for all players";
+  keyBtn.addEventListener("click", () => {
+    capture =
+      isCapturing ? null : { kind: "default", buttonId: button.id };
+    render();
+  });
+
+  const del = document.createElement("button");
+  del.className = "icon-btn danger";
+  del.textContent = "×";
+  del.title = "Remove button";
+  del.setAttribute("aria-label", "Remove button");
+  del.addEventListener("click", () => removeButton(layout, button.id));
+
+  li.append(color, label, keyBtn, del);
+  return li;
+}
+
+// ---------------------------------------------------------------------------
+// Render: players
+// ---------------------------------------------------------------------------
+
+function renderPlayers() {
+  const layout = activeLayout();
   const list = Object.values(members).sort((a, b) => a.name.localeCompare(b.name));
   el.emptyHint.style.display = list.length ? "none" : "block";
   el.playerList.innerHTML = "";
@@ -146,31 +269,82 @@ function render() {
     li.className = "player" + (m.online ? "" : " offline");
     li.dataset.id = m.id;
 
-    const bound = bindings[m.id];
-    const isCapturing = capturingFor === m.id;
-
-    li.innerHTML = `
+    const head = document.createElement("div");
+    head.className = "player-head";
+    head.innerHTML = `
       <span class="player-dot ${m.online ? "online" : "offline"}"></span>
       <span class="player-name">${escapeHtml(m.name)}</span>
-      <button class="bind-btn ${isCapturing ? "capturing" : ""} ${bound ? "" : "unset"}">
-        ${isCapturing ? "Press keys…" : bound ? bindingLabel(bound) : "Set key"}
-      </button>
     `;
+    li.appendChild(head);
 
-    const bindBtn = li.querySelector(".bind-btn") as HTMLButtonElement;
-    bindBtn.addEventListener("click", () => {
-      capturingFor = capturingFor === m.id ? null : m.id;
-      render();
-    });
+    const grid = document.createElement("div");
+    grid.className = "player-bindings";
+    for (const button of layout.buttons) {
+      grid.appendChild(renderPlayerBinding(m, button));
+    }
+    li.appendChild(grid);
 
     el.playerList.appendChild(li);
   }
 }
 
-function escapeHtml(s: string): string {
-  const div = document.createElement("div");
-  div.textContent = s;
-  return div.innerHTML;
+function renderPlayerBinding(member: Member, button: ButtonDef): HTMLDivElement {
+  const wrap = document.createElement("div");
+  wrap.className = "binding";
+
+  const name = document.createElement("span");
+  name.className = "binding-label";
+  name.textContent = button.label || "(unnamed)";
+
+  const override = playerBindings[member.id]?.[button.id];
+  const effective = override ?? button.binding;
+  const isCapturing =
+    capture?.kind === "player" &&
+    capture.userId === member.id &&
+    capture.buttonId === button.id;
+
+  const keyBtn = document.createElement("button");
+  keyBtn.className =
+    "bind-btn" +
+    (isCapturing ? " capturing" : "") +
+    (effective ? "" : " unset") +
+    (override ? " override" : "");
+  keyBtn.textContent = isCapturing
+    ? "Press keys…"
+    : effective
+      ? bindingLabel(effective)
+      : "Set key";
+  keyBtn.title = override
+    ? "Per-player key (overrides default)"
+    : effective
+      ? "Using the layout's default key"
+      : "No key set";
+  keyBtn.addEventListener("click", () => {
+    capture = isCapturing
+      ? null
+      : { kind: "player", userId: member.id, buttonId: button.id };
+    render();
+  });
+
+  wrap.append(name, keyBtn);
+
+  // Allow reverting a per-player override back to the default.
+  if (override) {
+    const reset = document.createElement("button");
+    reset.className = "reset-btn";
+    reset.textContent = "↺";
+    reset.title = "Reset to default key";
+    reset.setAttribute("aria-label", "Reset to default key");
+    reset.addEventListener("click", () => clearOverride(member.id, button.id));
+    wrap.appendChild(reset);
+  }
+
+  return wrap;
+}
+
+function render() {
+  renderLayoutPanel();
+  renderPlayers();
 }
 
 function flashPlayer(userId: string) {
@@ -182,7 +356,73 @@ function flashPlayer(userId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Key capture: bind the next physical key to the selected player
+// Layout & binding mutations
+// ---------------------------------------------------------------------------
+
+function addButton() {
+  const layout = activeLayout();
+  layout.buttons.push(newButton(`Button ${layout.buttons.length + 1}`));
+  persistLayouts();
+  render();
+  void pushLayoutToAll();
+}
+
+function removeButton(layout: Layout, buttonId: string) {
+  layout.buttons = layout.buttons.filter((b) => b.id !== buttonId);
+  // Drop any per-player overrides for the removed button.
+  for (const map of Object.values(playerBindings)) delete map[buttonId];
+  persistLayouts();
+  savePlayerBindings(playerBindings);
+  render();
+  void pushLayoutToAll();
+}
+
+function clearOverride(userId: string, buttonId: string) {
+  const map = playerBindings[userId];
+  if (!map) return;
+  delete map[buttonId];
+  if (Object.keys(map).length === 0) delete playerBindings[userId];
+  savePlayerBindings(playerBindings);
+  renderPlayers();
+}
+
+function selectLayout(id: string) {
+  if (id === activeLayoutId) return;
+  activeLayoutId = id;
+  setActiveLayoutId(id);
+  capture = null;
+  render();
+  void pushLayoutToAll();
+}
+
+function createLayout() {
+  const layout: Layout = {
+    id: crypto.randomUUID(),
+    name: `Layout ${layouts.length + 1}`,
+    buttons: [newButton("Button 1")],
+  };
+  layouts.push(layout);
+  persistLayouts();
+  selectLayout(layout.id);
+  el.layoutName.focus();
+  el.layoutName.select();
+}
+
+function deleteLayout() {
+  if (layouts.length <= 1) return;
+  const removed = activeLayout();
+  if (!confirm(`Delete layout "${removed.name}"?`)) return;
+  layouts = layouts.filter((l) => l.id !== removed.id);
+  persistLayouts();
+  activeLayoutId = layouts[0].id;
+  setActiveLayoutId(activeLayoutId);
+  capture = null;
+  render();
+  void pushLayoutToAll();
+}
+
+// ---------------------------------------------------------------------------
+// Key capture: bind the next physical key to the current capture target
 // ---------------------------------------------------------------------------
 
 // Codes for the modifier keys themselves — pressing one alone shouldn't finish
@@ -200,10 +440,10 @@ const MODIFIER_CODES = new Set([
 ]);
 
 window.addEventListener("keydown", (e) => {
-  if (!capturingFor) return;
+  if (!capture) return;
   e.preventDefault();
   if (e.code === "Escape") {
-    capturingFor = null;
+    capture = null;
     render();
     return;
   }
@@ -214,10 +454,23 @@ window.addEventListener("keydown", (e) => {
   if (e.altKey) modifiers.push("Alt");
   if (e.shiftKey) modifiers.push("Shift");
   if (e.metaKey) modifiers.push("Meta");
+  // Keep modifiers in a stable, canonical order.
+  const ordered = MODIFIER_ORDER.filter((m) => modifiers.includes(m));
+  const binding: Binding = { modifiers: ordered, code: e.code };
 
-  bindings[capturingFor] = { modifiers, code: e.code };
-  saveBindings(bindings);
-  capturingFor = null;
+  if (capture.kind === "default") {
+    const button = activeLayout().buttons.find((b) => b.id === capture!.buttonId);
+    if (button) {
+      button.binding = binding;
+      persistLayouts();
+    }
+  } else {
+    const map = (playerBindings[capture.userId] ||= {});
+    map[capture.buttonId] = binding;
+    savePlayerBindings(playerBindings);
+  }
+
+  capture = null;
   render();
 });
 
@@ -265,13 +518,32 @@ async function ensureRoom(apiBase: string): Promise<string> {
   return data.roomCode;
 }
 
-// The single-button UI we hand each player. Re-pushing it resets the button's
+// Push the active layout to a player. Re-pushing resets each button's
 // "submitted" lock so presses are repeatable.
-function pushButton(userId: string, name: string) {
+function pushLayoutTo(userId: string) {
   socket?.emit("member.update", {
     to: userId,
-    data: buttonState(name),
+    data: layoutState(members[userId]?.name || "", activeLayout()),
   });
+}
+
+async function pushLayoutToAll() {
+  if (!socket) return;
+  // Push per-player so each keeps their own header (their name).
+  for (const m of Object.values(members)) {
+    if (m.online) pushLayoutTo(m.id);
+  }
+}
+
+// Label edits arrive keystroke-by-keystroke; debounce the re-push so we don't
+// spam the relay while the host is typing.
+let repushTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleRepushAll() {
+  if (repushTimer !== null) clearTimeout(repushTimer);
+  repushTimer = setTimeout(() => {
+    repushTimer = null;
+    void pushLayoutToAll();
+  }, 350);
 }
 
 // Reasons partysocket recovers from on its own (it reconnects and re-fires
@@ -343,22 +615,26 @@ async function connect() {
     for (const m of Object.values(members)) {
       if (m.online && !initialized.has(m.id)) {
         initialized.add(m.id);
-        pushButton(m.id, m.name);
+        pushLayoutTo(m.id);
       }
       if (!m.online) initialized.delete(m.id);
     }
-    render();
+    renderPlayers();
   });
 
-  // A player tapped their button.
+  // A player tapped one of their buttons. The Button's `event` is its id.
   socket.on("msg", (payload) => {
-    const from = (payload as { from?: string })?.from;
+    const p = payload as { from?: string; event?: string };
+    const from = p?.from;
     if (!from) return;
-    const binding = bindings[from];
-    if (binding) void pressKey(binding);
+    const button = activeLayout().buttons.find((b) => b.id === p.event);
+    if (button) {
+      const binding = effectiveBinding(from, button);
+      if (binding) void pressKey(binding);
+    }
     flashPlayer(from);
-    // Re-arm the player's button (clears its submitted/disabled state).
-    pushButton(from, members[from]?.name || "");
+    // Re-arm the player's buttons (clears the tapped button's submitted lock).
+    pushLayoutTo(from);
   });
 }
 
@@ -371,14 +647,93 @@ async function newRoom() {
   members = {};
   initialized.clear();
   el.roomCode.textContent = "————";
-  render();
+  renderPlayers();
   await connect();
   el.newRoomBtn.disabled = false;
 }
 
+// ---------------------------------------------------------------------------
+// Export / import
+// ---------------------------------------------------------------------------
+
+async function doExport() {
+  const layout = activeLayout();
+  const json = exportLayout(layout);
+
+  // Offer a file download…
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const safeName = (layout.name || "layout").replace(/[^a-z0-9-_]+/gi, "-");
+  a.href = url;
+  a.download = `${safeName}.hackboxkb.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  // …and copy to the clipboard for quick pasting.
+  try {
+    await navigator.clipboard.writeText(json);
+    toast("Layout copied to clipboard & downloaded");
+  } catch {
+    toast("Layout downloaded");
+  }
+}
+
+function openImport() {
+  el.importText.value = "";
+  el.importFile.value = "";
+  el.importError.textContent = "";
+  el.importDialog.showModal();
+}
+
+function applyImport(json: string): boolean {
+  try {
+    const layout = importLayout(json);
+    layouts.push(layout);
+    persistLayouts();
+    activeLayoutId = layout.id;
+    setActiveLayoutId(activeLayoutId);
+    capture = null;
+    render();
+    void pushLayoutToAll();
+    toast(`Imported "${layout.name}"`);
+    return true;
+  } catch (err) {
+    el.importError.textContent = (err as Error).message;
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wire up DOM events
+// ---------------------------------------------------------------------------
+
 el.newRoomBtn.addEventListener("click", () => void newRoom());
+el.layoutSelect.addEventListener("change", () => selectLayout(el.layoutSelect.value));
+el.newLayoutBtn.addEventListener("click", () => createLayout());
+el.layoutName.addEventListener("input", () => {
+  activeLayout().name = el.layoutName.value;
+  persistLayouts();
+  // Reflect the rename in the picker without disturbing the focused input.
+  const opt = el.layoutSelect.querySelector(`option[value="${CSS.escape(activeLayoutId)}"]`);
+  if (opt) opt.textContent = el.layoutName.value || "Untitled";
+});
+el.addButtonBtn.addEventListener("click", () => addButton());
+el.exportBtn.addEventListener("click", () => void doExport());
+el.importBtn.addEventListener("click", () => openImport());
+el.deleteLayoutBtn.addEventListener("click", () => deleteLayout());
+
+el.importFile.addEventListener("change", async () => {
+  const file = el.importFile.files?.[0];
+  if (file) el.importText.value = await file.text();
+});
+
+// Validate before closing so a bad paste keeps the dialog open with the error.
+el.importConfirm.addEventListener("click", (e) => {
+  e.preventDefault();
+  if (applyImport(el.importText.value)) el.importDialog.close("import");
+});
 
 // Create/reuse a room and connect immediately on launch.
-void connect();
-
 render();
+void connect();
