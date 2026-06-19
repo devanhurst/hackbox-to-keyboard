@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { initStorage, storage } from "./storage";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { emptyState, layoutState } from "./memberState";
 import { createHackboxSocket, type HackboxSocket } from "./hackboxSocket";
 import {
@@ -184,11 +186,6 @@ const el = {
   layoutName: document.getElementById("layout-name") as HTMLInputElement,
   layoutButtons: document.getElementById("layout-buttons") as HTMLUListElement,
   addButtonBtn: document.getElementById("add-button-btn") as HTMLButtonElement,
-  // import dialog
-  importDialog: document.getElementById("import-dialog") as HTMLDialogElement,
-  importFile: document.getElementById("import-file") as HTMLInputElement,
-  importError: document.getElementById("import-error") as HTMLParagraphElement,
-  importConfirm: document.getElementById("import-confirm") as HTMLButtonElement,
   // confirm dialog
   confirmDialog: document.getElementById("confirm-dialog") as HTMLDialogElement,
   confirmTitle: document.getElementById("confirm-title") as HTMLHeadingElement,
@@ -365,7 +362,7 @@ function renderLayoutIndexRow(layout: Layout): HTMLLIElement {
   const dup = iconButton("⧉", "Duplicate layout");
   dup.addEventListener("click", () => duplicateLayoutById(layout.id));
 
-  const exp = iconButton("⤓", "Export layout (copy & download JSON)");
+  const exp = iconButton("⤓", "Export layout to a JSON file");
   exp.addEventListener("click", () => void exportLayoutFile(layout));
 
   const del = iconButton("×", "Delete layout", true);
@@ -1150,38 +1147,46 @@ async function newRoom() {
 // ---------------------------------------------------------------------------
 
 async function exportLayoutFile(layout: Layout) {
-  const json = exportLayout(layout);
-
-  // Offer a file download…
-  const blob = new Blob([json], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
   const safeName = (layout.name || "layout").replace(/[^a-z0-9-_]+/gi, "-");
-  a.href = url;
-  a.download = `${safeName}.hackboxkb.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-
-  toast("Layout downloaded");
+  const path = await save({
+    defaultPath: `${safeName}.hackboxkb.json`,
+    filters: [{ name: "Hackbox Layout", extensions: ["json"] }],
+  });
+  if (!path) return; // user cancelled the save dialog
+  try {
+    await writeTextFile(path, exportLayout(layout));
+    toast("Layout exported");
+  } catch (err) {
+    toast(`Export failed: ${(err as Error).message}`);
+  }
 }
 
-function openImport() {
-  el.importFile.value = "";
-  el.importError.textContent = "";
-  el.importDialog.showModal();
+async function openImport() {
+  const path = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: "Hackbox Layout", extensions: ["json"] }],
+  });
+  if (typeof path !== "string") return; // cancelled
+  let json: string;
+  try {
+    json = await readTextFile(path);
+  } catch (err) {
+    toast(`Couldn't read that file: ${(err as Error).message}`);
+    return;
+  }
+  applyImport(json);
 }
 
-function applyImport(json: string): boolean {
+function applyImport(json: string) {
   try {
     const layout = importLayout(json);
     layouts.push(layout);
     persistLayouts();
     toast(`Imported "${layout.name}"`);
     openEditor(layout.id); // jump straight into editing the imported layout
-    return true;
   } catch (err) {
-    el.importError.textContent = (err as Error).message;
-    return false;
+    toast((err as Error).message);
   }
 }
 
@@ -1196,7 +1201,7 @@ el.tabLayouts.addEventListener("click", () => showView("layouts"));
 
 // layouts index view
 el.newLayoutBtn.addEventListener("click", () => createLayout());
-el.importBtn.addEventListener("click", () => openImport());
+el.importBtn.addEventListener("click", () => void openImport());
 
 // editor view
 el.editorBack.addEventListener("click", () => showView("layouts"));
@@ -1208,22 +1213,6 @@ el.layoutName.addEventListener("input", () => {
   }
 });
 el.addButtonBtn.addEventListener("click", () => addButton());
-
-// import dialog
-el.importFile.addEventListener("change", () => {
-  el.importError.textContent = ""; // clear a stale error when a new file is picked
-});
-// Read the chosen file and validate before closing, so a bad file keeps the
-// dialog open with the error shown.
-el.importConfirm.addEventListener("click", async (e) => {
-  e.preventDefault();
-  const file = el.importFile.files?.[0];
-  if (!file) {
-    el.importError.textContent = "Choose a file to import.";
-    return;
-  }
-  if (applyImport(await file.text())) el.importDialog.close("import");
-});
 
 // ---------------------------------------------------------------------------
 // Auto-update

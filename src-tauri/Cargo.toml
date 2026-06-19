@@ -19,6 +19,9 @@ enigo = "0.2"
 # Persistent config storage (layouts, players, identity) in a JSON file in the
 # app data dir — replaces WebView localStorage so data reliably survives updates.
 tauri-plugin-store = "2"
+# Native file pickers (layout export/import) + reading/writing the chosen file.
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 
 # In-app auto-updates: the updater checks a signed `latest.json` manifest and
 # installs newer signed builds; `process` provides relaunch() after install.
