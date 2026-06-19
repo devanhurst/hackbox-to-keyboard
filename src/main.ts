@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { emptyState, layoutState } from "./memberState";
 import { createHackboxSocket, type HackboxSocket } from "./hackboxSocket";
 import {
@@ -202,10 +204,15 @@ function confirmDialog(opts: {
   title: string;
   message: string;
   confirmLabel: string;
+  // The confirm button's style. Defaults to "danger" since the dialog's first
+  // use was destructive deletes; pass "primary" for affirmative actions.
+  tone?: "danger" | "primary";
 }): Promise<boolean> {
   el.confirmTitle.textContent = opts.title;
   el.confirmMessage.textContent = opts.message;
   el.confirmOk.textContent = opts.confirmLabel;
+  el.confirmOk.className =
+    opts.tone === "primary" ? "primary-btn" : "ghost-btn danger";
   el.confirmDialog.showModal();
   return new Promise((resolve) => {
     el.confirmDialog.addEventListener(
@@ -1215,6 +1222,40 @@ el.importConfirm.addEventListener("click", async (e) => {
   if (applyImport(await file.text())) el.importDialog.close("import");
 });
 
+// ---------------------------------------------------------------------------
+// Auto-update
+//
+// On launch, ask the updater plugin whether a newer signed build exists (it
+// fetches the `latest.json` manifest configured in tauri.conf.json). If so,
+// prompt the user; on confirm, download + install the verified update and
+// relaunch into it. Runs best-effort: any failure (offline, dev build with no
+// updater configured, etc.) is logged and swallowed so it never blocks the app.
+// ---------------------------------------------------------------------------
+async function checkForUpdates(): Promise<void> {
+  try {
+    const update = await check();
+    if (!update) return;
+
+    const ok = await confirmDialog({
+      title: "Update available",
+      message: `Version ${update.version} is available (you have ${update.currentVersion}). Install it now? The app will restart.`,
+      confirmLabel: "Install & restart",
+      tone: "primary",
+    });
+    if (!ok) return;
+
+    toast("Downloading update…");
+    await update.downloadAndInstall();
+    await relaunch();
+  } catch (err) {
+    // Don't surface to the user — a failed update check shouldn't look like an
+    // app error. Most commonly this is just being offline or a non-bundled
+    // dev build where the updater isn't active.
+    console.warn("Update check failed:", err);
+  }
+}
+
 // Show the home view, then create/reuse a room and connect on launch.
 showView("players");
 void connect();
+void checkForUpdates();

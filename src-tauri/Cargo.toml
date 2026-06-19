@@ -1,6 +1,6 @@
 [package]
 name = "hackbox-to-keyboard"
-version = "3.2.0"
+version = "3.2.1"
 description = "Hackbox host client that casts player button presses to OS-level keypresses"
 edition = "2021"
 
@@ -16,3 +16,11 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 enigo = "0.2"
+
+# In-app auto-updates: the updater checks a signed `latest.json` manifest and
+# installs newer signed builds; `process` provides relaunch() after install.
+# Desktop-only — `cfg(desktop)` is a tauri-build custom cfg that isn't known at
+# Cargo dependency-resolution time, so the dep filter must use the OS check.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"

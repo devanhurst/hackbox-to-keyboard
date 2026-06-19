@@ -156,40 +156,58 @@ the paid account, does that); locally-built apps run without that warning.
 3. Grant Accessibility once (remove any stale entry first). Rebuilds with the
    same cert keep the grant.
 
-#### Signing in CI
+#### Signing + notarization in CI
 
-Signing is **off by default** — the workflow builds an unsigned macOS app. To
-turn it on, add these repo secrets **and** uncomment the four `APPLE_*` /
-`KEYCHAIN_PASSWORD` env lines in `.github/workflows/release.yml`:
+CI signs macOS builds with an Apple **Developer ID Application** certificate and
+notarizes them. This removes the Gatekeeper "unidentified developer" warning and
+gives a stable code signature, so the Accessibility key-injection grant survives
+auto-updates (the grant follows the signing identity). It requires a paid Apple
+Developer account.
+
+**1. Create the certificate.** In Keychain Access → **Certificate Assistant →
+Request a Certificate from a Certificate Authority** to generate a CSR (save to
+disk). At [developer.apple.com → Certificates](https://developer.apple.com/account/resources/certificates/list)
+→ **+** → **Developer ID Application**, upload the CSR, download the `.cer`, and
+double-click it to install into your login keychain.
+
+**2. Export it as `.p12`.** In Keychain Access, find the "Developer ID
+Application: …" cert, expand it to confirm the **private key** is attached,
+right-click → **Export** → `.p12`, and set an export password.
+
+**3. Make an app-specific password** for notarization at
+[appleid.apple.com](https://appleid.apple.com) → **Sign-In and Security →
+App-Specific Passwords**.
+
+**4. Find your Team ID** at [developer.apple.com → Membership](https://developer.apple.com/account)
+(also the value in parentheses in the signing identity name).
+
+**5. Set the secrets** (these must exist *before* you push a release tag):
 
 | Secret | Value |
 | --- | --- |
-| `APPLE_CERTIFICATE` | base64 of the cert exported as `.p12` (key included) |
-| `APPLE_CERTIFICATE_PASSWORD` | the password set when exporting the `.p12` |
-| `APPLE_SIGNING_IDENTITY` | `Hackbox to Keyboard (Self-Signed)` |
+| `APPLE_CERTIFICATE` | base64 of the exported `.p12` |
+| `APPLE_CERTIFICATE_PASSWORD` | the `.p12` export password |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Your Name (TEAMID)` |
 | `KEYCHAIN_PASSWORD` | any random string (for CI's temp keychain) |
-
-> Don't uncomment them without the secrets set: `tauri-action` tries to import
-> the certificate whenever `APPLE_CERTIFICATE` is defined, and an empty value
-> fails the build.
-
-Export the cert (Keychain Access → right-click the cert → **Export** → `.p12`),
-then set the secrets with the GitHub CLI:
+| `APPLE_ID` | your Apple ID email |
+| `APPLE_PASSWORD` | the app-specific password from step 3 |
+| `APPLE_TEAM_ID` | your 10-char Team ID |
 
 ```bash
 base64 -i cert.p12 | gh secret set APPLE_CERTIFICATE
-printf '%s' 'YOUR_P12_PASSWORD' | gh secret set APPLE_CERTIFICATE_PASSWORD
-gh secret set APPLE_SIGNING_IDENTITY -b "Hackbox to Keyboard (Self-Signed)"
+printf '%s' 'YOUR_P12_PASSWORD'   | gh secret set APPLE_CERTIFICATE_PASSWORD
+gh secret set APPLE_SIGNING_IDENTITY -b "Developer ID Application: Your Name (TEAMID)"
 gh secret set KEYCHAIN_PASSWORD -b "$(openssl rand -base64 24)"
+gh secret set APPLE_ID -b "you@example.com"
+printf '%s' 'xxxx-xxxx-xxxx-xxxx' | gh secret set APPLE_PASSWORD
+gh secret set APPLE_TEAM_ID -b "TEAMID1234"
 rm cert.p12
 ```
 
-Use the **same** cert in CI as locally so a user who grants Accessibility to one
-release keeps it across future releases (the grant follows the cert).
-
-To upgrade to notarized builds later (removes the download warning), set an
-Apple Developer cert plus `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`, which
-switches `tauri-action` into notarize mode.
+> The `APPLE_*` env lines are wired up in `.github/workflows/release.yml`. Don't
+> push a tag until every secret above is set: `tauri-action` runs `security
+> import` whenever `APPLE_CERTIFICATE` is defined, and an empty/unset value
+> fails the whole build.
 
 ### Windows
 
@@ -220,6 +238,52 @@ regenerate the platform icon set from a source image:
 ```bash
 npm run tauri icon path/to/source.png
 ```
+
+## Auto-updates
+
+The app updates itself in place — users don't re-download from the releases
+page. On launch it checks a signed `latest.json` manifest published with each
+GitHub release (`tauri-plugin-updater`); if a newer build exists it prompts,
+then downloads, verifies, installs, and relaunches. Updates are signed with a
+private key the app refuses to install anything else, so the release host can't
+push a malicious build.
+
+### One-time setup
+
+1. **Generate the signing keypair** (keep the private key secret — it never goes
+   in the repo):
+
+   ```bash
+   npm run tauri signer generate -- -w ~/.tauri/hackbox.key
+   ```
+
+   This writes `~/.tauri/hackbox.key` (private) and `~/.tauri/hackbox.key.pub`
+   (public), and prints both.
+
+2. **Add the public key to config.** Paste the contents of
+   `~/.tauri/hackbox.key.pub` into `plugins.updater.pubkey` in
+   `src-tauri/tauri.conf.json` (replacing the `REPLACE_WITH_…` placeholder), and
+   commit it. The `endpoints` there already point at this repo's
+   `releases/latest/download/latest.json`.
+
+3. **Add the private key as CI secrets** so `tauri-action` can sign updates and
+   generate `latest.json`:
+
+   ```bash
+   gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/hackbox.key
+   # The password you set during `signer generate` (empty string if none):
+   printf '%s' 'YOUR_KEY_PASSWORD' | gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+   ```
+
+After that, every tagged release produces signed update artifacts plus a
+`latest.json` manifest. The endpoint resolves to the latest **published**,
+non-prerelease release — so an update only goes out once you publish the draft
+release the workflow creates (not the moment the tag builds).
+
+> The pubkey in config and the private key in CI must be from the same keypair.
+> If you ever rotate the key, shipped clients trust only the **old** key, so push
+> one release signed with the old key that bumps to the new pubkey before
+> switching — otherwise existing installs can't accept the update.
 
 ## Platform notes (key injection)
 

@@ -53,23 +53,33 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS signing is OFF by default (builds are unsigned). Do NOT define
-          # the APPLE_CERTIFICATE env var unless you actually have the secret:
-          # tauri-action runs `security import` whenever the var is *defined* —
-          # even as an empty string when the secret is unset — and importing an
-          # empty cert fails the whole build ("security import ... parameters not
-          # valid").
+          # Updater signing. With these set, tauri-action signs the update
+          # artifacts and generates + uploads `latest.json` (the manifest the
+          # app polls). Generate the keypair once with
+          # `npm run tauri signer generate -- -w ~/.tauri/hackbox.key`, then add
+          # the secrets (see README). Without them the build still succeeds but
+          # no updater manifest is produced, so in-app updates won't work.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS Developer ID signing + notarization. tauri-action imports the
+          # cert from APPLE_CERTIFICATE and signs with APPLE_SIGNING_IDENTITY;
+          # when APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID are also present it
+          # notarizes and staples, which removes the Gatekeeper "unidentified
+          # developer" warning and gives a stable signature so the macOS
+          # Accessibility key-injection grant survives updates.
           #
-          # To enable free self-signed signing (a stable signature so the macOS
-          # Accessibility key-injection grant persists), add the repo secrets
-          # described in the README, then UNCOMMENT the four lines below. (This
-          # does NOT remove the Gatekeeper download warning — only Apple
-          # notarization does: add APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID with an
-          # Apple Developer cert for that.)
-          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          # KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          # All of these must be set as repo secrets BEFORE pushing a tag: once
+          # APPLE_CERTIFICATE is defined, tauri-action runs `security import` on
+          # the macOS runner, and an empty/unset value fails the whole build
+          # ("security import ... parameters not valid"). See the README for how
+          # to create the cert and an app-specific password.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           args: ${{ matrix.args }}
           tagName: ${{ github.ref_name }}
