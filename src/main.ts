@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { initStorage, storage } from "./storage";
 import { emptyState, layoutState } from "./memberState";
 import { createHackboxSocket, type HackboxSocket } from "./hackboxSocket";
 import {
@@ -44,15 +45,17 @@ const RELAY_HOST = new URL(SERVER_URL).host;
 const RELAY_PROTOCOL = new URL(SERVER_URL).protocol === "https:" ? "wss" : "ws";
 
 function getHostId(): string {
-  let id = localStorage.getItem(LS.hostId);
+  let id = storage.getItem(LS.hostId);
   if (!id) {
     id = crypto.randomUUID();
-    localStorage.setItem(LS.hostId, id);
+    storage.setItem(LS.hostId, id);
   }
   return id;
 }
 
-const hostId = getHostId();
+// Persistent state, loaded in bootstrap() at the bottom once storage is
+// hydrated. Populated before the UI is shown.
+let hostId = "";
 
 // ---------------------------------------------------------------------------
 // App state
@@ -64,14 +67,14 @@ interface Member {
   online: boolean;
 }
 
-let layouts: Layout[] = loadLayouts();
-let editingLayoutId: string | null = getEditingLayoutId();
-let players: Players = loadPlayers();
-let playerOrder: string[] = loadPlayerOrder(); // host-chosen roster order
+let layouts: Layout[] = [];
+let editingLayoutId: string | null = null;
+let players: Players = {};
+let playerOrder: string[] = []; // host-chosen roster order
 
 function loadPlayerOrder(): string[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(LS.playerOrder) || "[]");
+    const raw = JSON.parse(storage.getItem(LS.playerOrder) || "[]");
     return Array.isArray(raw)
       ? raw.filter((x): x is string => typeof x === "string")
       : [];
@@ -81,7 +84,7 @@ function loadPlayerOrder(): string[] {
 }
 
 function savePlayerOrder() {
-  localStorage.setItem(LS.playerOrder, JSON.stringify(playerOrder));
+  storage.setItem(LS.playerOrder, JSON.stringify(playerOrder));
 }
 
 // Roster in the host's chosen order: ids in `playerOrder` first, then any member
@@ -1255,7 +1258,20 @@ async function checkForUpdates(): Promise<void> {
   }
 }
 
-// Show the home view, then create/reuse a room and connect on launch.
-showView("players");
-void connect();
-void checkForUpdates();
+// Hydrate persistent storage (migrating any legacy localStorage on first run),
+// load saved config, then show the home view, create/reuse a room, and connect.
+// Done as an async bootstrap rather than top-level await so the Vite build
+// target can stay broad for older WebViews.
+async function bootstrap() {
+  await initStorage();
+  hostId = getHostId();
+  layouts = loadLayouts();
+  editingLayoutId = getEditingLayoutId();
+  players = loadPlayers();
+  playerOrder = loadPlayerOrder();
+
+  showView("players");
+  void connect();
+  void checkForUpdates();
+}
+void bootstrap();

@@ -113,7 +113,8 @@ fn press_key(code: String, modifiers: Vec<String>) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default();
+    let mut builder =
+        tauri::Builder::default().plugin(tauri_plugin_store::Builder::new().build());
 
     // Auto-updater is desktop-only; `process` backs the post-install relaunch.
     #[cfg(desktop)]

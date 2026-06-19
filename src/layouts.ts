@@ -17,6 +17,8 @@
 // this machine).
 // ---------------------------------------------------------------------------
 
+import { storage } from "./storage";
+
 export type Modifier = "Control" | "Alt" | "Shift" | "Meta";
 
 // A binding is a main key (KeyboardEvent.code, e.g. "KeyA") plus zero or more
@@ -141,7 +143,7 @@ function coerceLayout(v: unknown): Layout | null {
 // --- persistence ----------------------------------------------------------
 
 export function loadLayouts(): Layout[] {
-  const stored = localStorage.getItem(LS.layouts);
+  const stored = storage.getItem(LS.layouts);
   if (stored !== null) {
     // The key exists — respect whatever's there, including an empty list (the
     // user may have deleted every layout).
@@ -162,21 +164,21 @@ export function loadLayouts(): Layout[] {
 }
 
 export function saveLayouts(layouts: Layout[]) {
-  localStorage.setItem(LS.layouts, JSON.stringify(layouts));
+  storage.setItem(LS.layouts, JSON.stringify(layouts));
 }
 
 export function getEditingLayoutId(): string | null {
-  return localStorage.getItem(LS.editingLayoutId);
+  return storage.getItem(LS.editingLayoutId);
 }
 
 export function setEditingLayoutId(id: string) {
-  localStorage.setItem(LS.editingLayoutId, id);
+  storage.setItem(LS.editingLayoutId, id);
 }
 
 export function loadPlayers(): Players {
   let raw: Record<string, unknown>;
   try {
-    raw = JSON.parse(localStorage.getItem(LS.players) || "{}");
+    raw = JSON.parse(storage.getItem(LS.players) || "{}");
   } catch {
     return {};
   }
@@ -200,7 +202,7 @@ export function loadPlayers(): Players {
 }
 
 export function savePlayers(players: Players) {
-  localStorage.setItem(LS.players, JSON.stringify(players));
+  storage.setItem(LS.players, JSON.stringify(players));
 }
 
 // Migrate the original `userId -> Binding` store (a single "press" button) into
@@ -209,7 +211,7 @@ export function savePlayers(players: Players) {
 function migrateLegacyBindings(layoutId: string, buttonId: string) {
   let raw: Record<string, unknown>;
   try {
-    raw = JSON.parse(localStorage.getItem(LS.legacyBindings) || "{}");
+    raw = JSON.parse(storage.getItem(LS.legacyBindings) || "{}");
   } catch {
     return;
   }
@@ -221,7 +223,7 @@ function migrateLegacyBindings(layoutId: string, buttonId: string) {
     if (binding) players[userId] = { layoutId, overrides: { [buttonId]: binding } };
   }
   if (Object.keys(players).length) savePlayers(players);
-  localStorage.removeItem(LS.legacyBindings);
+  storage.removeItem(LS.legacyBindings);
 }
 
 // --- export / import ------------------------------------------------------
