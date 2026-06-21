@@ -32,10 +32,49 @@ async fn press_key(code: String, modifiers: Vec<String>) -> Result<(), String> {
     }
 }
 
+/// Map a printable `KeyboardEvent.code` to its macOS virtual keycode (ANSI
+/// layout). On macOS, synthesizing a `Key::Unicode(c)` makes enigo resolve the
+/// character through the Carbon Text Input Source Manager, whose APIs assert they
+/// are called on the main thread and abort the process otherwise (SIGTRAP). We
+/// run key presses on a `spawn_blocking` worker thread, so that assertion fires
+/// on the first letter/digit/punctuation press. Pressing `Key::Other(vk)` with a
+/// raw keycode bypasses that lookup. Mapping by physical `code` is also more
+/// correct for games (position-based, layout-independent).
+#[cfg(target_os = "macos")]
+fn macos_virtual_keycode(code: &str) -> Option<u32> {
+    Some(match code {
+        "KeyA" => 0x00, "KeyS" => 0x01, "KeyD" => 0x02, "KeyF" => 0x03,
+        "KeyH" => 0x04, "KeyG" => 0x05, "KeyZ" => 0x06, "KeyX" => 0x07,
+        "KeyC" => 0x08, "KeyV" => 0x09, "KeyB" => 0x0B, "KeyQ" => 0x0C,
+        "KeyW" => 0x0D, "KeyE" => 0x0E, "KeyR" => 0x0F, "KeyY" => 0x10,
+        "KeyT" => 0x11, "KeyO" => 0x1F, "KeyU" => 0x20, "KeyI" => 0x22,
+        "KeyP" => 0x23, "KeyL" => 0x25, "KeyJ" => 0x26, "KeyK" => 0x28,
+        "KeyN" => 0x2D, "KeyM" => 0x2E,
+        "Digit1" => 0x12, "Digit2" => 0x13, "Digit3" => 0x14, "Digit4" => 0x15,
+        "Digit6" => 0x16, "Digit5" => 0x17, "Digit9" => 0x19, "Digit7" => 0x1A,
+        "Digit8" => 0x1C, "Digit0" => 0x1D,
+        "Numpad0" => 0x52, "Numpad1" => 0x53, "Numpad2" => 0x54, "Numpad3" => 0x55,
+        "Numpad4" => 0x56, "Numpad5" => 0x57, "Numpad6" => 0x58, "Numpad7" => 0x59,
+        "Numpad8" => 0x5B, "Numpad9" => 0x5C,
+        "Minus" => 0x1B, "Equal" => 0x18, "BracketLeft" => 0x21,
+        "BracketRight" => 0x1E, "Backslash" => 0x2A, "Semicolon" => 0x29,
+        "Quote" => 0x27, "Comma" => 0x2B, "Period" => 0x2F, "Slash" => 0x2C,
+        "Backquote" => 0x32,
+        _ => return None,
+    })
+}
+
 /// Map a browser `KeyboardEvent.code` to an enigo key. Using `code` (physical
 /// key) rather than `key` (produced character) keeps WASD/arrows/etc. working
 /// regardless of layout and matches what games typically read.
 fn code_to_key(code: &str) -> Option<Key> {
+    // On macOS, route printable keys to raw virtual keycodes to avoid the
+    // main-thread-only Text Input Source lookup (see `macos_virtual_keycode`).
+    #[cfg(target_os = "macos")]
+    if let Some(vk) = macos_virtual_keycode(code) {
+        return Some(Key::Other(vk));
+    }
+
     // Letters: "KeyA" -> 'a'
     if let Some(letter) = code.strip_prefix("Key") {
         let c = letter.chars().next()?;
