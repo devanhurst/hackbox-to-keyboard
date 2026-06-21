@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+enigo = "0.2"
 # Persistent config storage (layouts, players, identity) in a JSON file in the
 # app data dir — replaces WebView localStorage so data reliably survives updates.
 tauri-plugin-store = "2"
@@ -29,14 +30,3 @@ tauri-plugin-fs = "2"
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
-
-# Keyboard synthesis is platform-split: on Windows we call Win32 SendInput
-# directly (see lib.rs) so each event carries BOTH a virtual-key and a scan code
-# — DirectInput/Raw Input games (PS2/Dolphin emulators) read those fields and
-# ignore enigo's vk-only / scancode-only events. enigo's macOS/Linux paths post
-# proper keycode-based events, so we keep it there.
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse"] }
-
-[target.'cfg(not(windows))'.dependencies]
-enigo = "0.2"

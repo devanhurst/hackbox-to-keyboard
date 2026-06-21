@@ -1302,7 +1302,6 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-store",
  "tauri-plugin-updater",
- "windows 0.61.3",
 ]
 
 [[package]]
