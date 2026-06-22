@@ -75,13 +75,15 @@ function defaultLayout(): Layout {
   ]);
 }
 
+export const NO_KEY = "tap";
+
 export function encodeBinding(b: Binding | null): string {
-  if (!b) return "";
+  if (!b) return NO_KEY;
   return [...orderModifiers(b.modifiers), b.code].join("+");
 }
 
 export function decodeBinding(s: unknown): Binding | null {
-  if (typeof s !== "string" || !s) return null;
+  if (typeof s !== "string" || !s || s === NO_KEY) return null;
   const parts = s.split("+");
   const code = parts.pop();
   if (!code) return null;

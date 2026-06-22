@@ -951,14 +951,15 @@ async function connect() {
   });
 
   socket.on("msg", (payload) => {
-    const p = payload as { from?: string; value?: string };
+    const p = payload as { from?: string; event?: string; value?: string };
     const from = p?.from;
     if (!from) return;
-    const binding = decodeBinding(p.value);
+    const wire = p.value || p.event;
+    const binding = decodeBinding(wire);
     if (binding) void pressKey(binding);
     const layout = assignedLayout(from);
     const button = layout?.buttons.find(
-      (b) => encodeBinding(effectiveBinding(from, b)) === p.value,
+      (b) => encodeBinding(effectiveBinding(from, b)) === wire,
     );
     if (button) flashButton(from, button.id);
     flashPlayer(from);
