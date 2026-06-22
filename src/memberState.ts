@@ -3,14 +3,21 @@
 //
 // Shape mirrors what the hackbox client renders (state.ui.main.components) and
 // what the server's sanitizeState expects. Each Button component emits a `msg`
-// event named by `props.event` when tapped — we set that to the button's id so
-// the host can map the tap back to a key. The hackbox PlayerView lays the main
+// when tapped carrying `props.event` and `props.value`. We don't use `event` to
+// identify anything (it's a constant), and we set `value` to the button's
+// *resolved* key (see encodeBinding) so the host just presses what comes back —
+// no per-button identity on the wire. The hackbox PlayerView lays the main
 // area out as a single flex column (max-width ~350px), so buttons stack
 // vertically; we size them to share the screen based on how many there are.
 //
 // The server merges this over a dark default theme (helpers.emptyMemberState),
 // so we only need to specify what differs.
-import type { Layout } from "./layouts";
+import { encodeBinding } from "./layouts";
+import type { Binding, ButtonDef, Layout } from "./layouts";
+
+// A constant event for every button: the hackbox Button needs an event name to
+// emit a `msg`, but the host identifies nothing by it — see the file header.
+const TAP_EVENT = "tap";
 
 function buttonHeight(count: number): string {
   if (count <= 1) return "70vh";
@@ -55,7 +62,15 @@ export function emptyState(headerText: string) {
   };
 }
 
-export function layoutState(headerText: string, layout: Layout) {
+// `resolve` yields the key that should fire for THIS player on a given button
+// (their override, else the button default); pushToPlayer passes a per-player
+// resolver. We bake the resolved key into `value`, so each player can get a
+// different key for the same button without anything extra on the wire.
+export function layoutState(
+  headerText: string,
+  layout: Layout,
+  resolve: (button: ButtonDef) => Binding | null,
+) {
   const count = layout.buttons.length;
   const height = buttonHeight(count);
   const size = fontSize(count);
@@ -63,8 +78,8 @@ export function layoutState(headerText: string, layout: Layout) {
   const components = layout.buttons.map((b) => ({
     type: "Button",
     props: {
-      event: b.id,
-      value: b.id,
+      event: TAP_EVENT,
+      value: encodeBinding(resolve(b)),
       label: b.label,
       // Repeatable: the button never disables after a press, so taps map to
       // keypresses again and again without the host re-pushing to re-arm it.

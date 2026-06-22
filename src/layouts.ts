@@ -101,6 +101,32 @@ function defaultLayout(): Layout {
   };
 }
 
+// --- wire encoding --------------------------------------------------------
+
+// The host pushes each button's *resolved* key (its per-player override, else
+// the layout default) to the player as the Button's `value`. The player echoes
+// that value back untouched on tap, so the value IS the keypress: the host
+// presses whatever comes back, with no button lookup and no shared identity on
+// the wire. Two buttons that resolve to the same key legitimately send the same
+// value — that's fine, the host presses the same key either way.
+//
+// Format: modifiers (canonical order) then the KeyboardEvent.code, joined by
+// "+", e.g. "Control+Shift+KeyA" or just "KeyA". A tap-only button (no host
+// key) encodes to "" and fires nothing. No KeyboardEvent.code contains "+", so
+// the round-trip split is unambiguous.
+export function encodeBinding(b: Binding | null): string {
+  if (!b) return "";
+  return [...MODIFIER_ORDER.filter((m) => b.modifiers.includes(m)), b.code].join("+");
+}
+
+export function decodeBinding(s: unknown): Binding | null {
+  if (typeof s !== "string" || !s) return null;
+  const parts = s.split("+");
+  const code = parts.pop();
+  if (!code) return null;
+  return { code, modifiers: MODIFIER_ORDER.filter((m) => parts.includes(m)) };
+}
+
 // --- validation -----------------------------------------------------------
 
 function coerceModifiers(v: unknown): Modifier[] {

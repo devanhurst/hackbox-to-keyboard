@@ -7,7 +7,9 @@ import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { emptyState, layoutState } from "./memberState";
 import { createHackboxSocket, type HackboxSocket } from "./hackboxSocket";
 import {
+  decodeBinding,
   duplicateLayout,
+  encodeBinding,
   exportLayout,
   getEditingLayoutId,
   importLayout,
@@ -992,7 +994,9 @@ function pushToPlayer(userId: string) {
   const layout = assignedLayout(userId);
   socket.emit("member.update", {
     to: userId,
-    data: layout ? layoutState(name, layout) : emptyState(name),
+    data: layout
+      ? layoutState(name, layout, (b) => effectiveBinding(userId, b))
+      : emptyState(name),
   });
 }
 
@@ -1112,20 +1116,25 @@ async function connect() {
     if (currentView === "players") renderPlayers();
   });
 
-  // A player tapped one of their buttons. The Button's `event` is its id.
+  // A player tapped one of their buttons. The Button echoes back the resolved
+  // key we pushed as `value`, so we just press it — no button identity on the
+  // wire, no lookup needed for the keypress. (No re-push needed either: buttons
+  // are pushed `persistent`, so they stay armed for repeated taps.)
   socket.on("msg", (payload) => {
-    const p = payload as { from?: string; event?: string };
+    const p = payload as { from?: string; value?: string };
     const from = p?.from;
     if (!from) return;
+    const binding = decodeBinding(p.value);
+    if (binding) void pressKey(binding);
+    // Best-effort cosmetic: light the button whose resolved key matches what
+    // came back, so the host sees which button fired. Ambiguous when two
+    // buttons resolve to the same key (first match wins) — harmless, it's only
+    // a UI pulse.
     const layout = assignedLayout(from);
-    const button = layout?.buttons.find((b) => b.id === p.event);
-    if (button) {
-      const binding = effectiveBinding(from, button);
-      if (binding) void pressKey(binding);
-      // No re-push needed: the buttons are pushed `persistent`, so they stay
-      // armed for repeated taps (see layoutState).
-      flashButton(from, button.id);
-    }
+    const button = layout?.buttons.find(
+      (b) => encodeBinding(effectiveBinding(from, b)) === p.value,
+    );
+    if (button) flashButton(from, button.id);
     flashPlayer(from);
   });
 }
