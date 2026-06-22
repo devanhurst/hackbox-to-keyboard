@@ -12,6 +12,36 @@ async fn press_key(code: String, modifiers: Vec<String>) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrusted() -> u8;
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn accessibility_trusted() -> bool {
+    unsafe { AXIsProcessTrusted() != 0 }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn accessibility_trusted() -> bool {
+    true
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn open_accessibility_settings() {
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        .spawn();
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn open_accessibility_settings() {}
+
+#[cfg(target_os = "macos")]
 fn macos_virtual_keycode(code: &str) -> Option<u32> {
     Some(match code {
         "KeyA" => 0x00, "KeyS" => 0x01, "KeyD" => 0x02, "KeyF" => 0x03,
@@ -154,7 +184,11 @@ pub fn run() {
     }
 
     builder
-        .invoke_handler(tauri::generate_handler![press_key])
+        .invoke_handler(tauri::generate_handler![
+            press_key,
+            accessibility_trusted,
+            open_accessibility_settings
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
