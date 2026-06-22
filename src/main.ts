@@ -1058,6 +1058,25 @@ async function checkForUpdates(): Promise<void> {
   }
 }
 
+async function checkAccessibility(): Promise<void> {
+  try {
+    if (await invoke<boolean>("accessibility_trusted")) return;
+
+    const ok = await confirmDialog({
+      title: "Enable Accessibility",
+      message:
+        "macOS needs Accessibility permission for Hackbox to Keyboard to send keypresses. " +
+        "Open System Settings, add (or re-add) this app under Privacy & Security → Accessibility " +
+        "and turn it on, then quit and reopen the app.",
+      confirmLabel: "Open Settings",
+      tone: "primary",
+    });
+    if (ok) await invoke("open_accessibility_settings");
+  } catch (err) {
+    console.warn("Accessibility check failed:", err);
+  }
+}
+
 async function bootstrap() {
   await initStorage();
   hostId = getHostId();
@@ -1068,6 +1087,9 @@ async function bootstrap() {
 
   showView("players");
   void connect();
-  void checkForUpdates();
+  void (async () => {
+    await checkAccessibility();
+    await checkForUpdates();
+  })();
 }
 void bootstrap();
