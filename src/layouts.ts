@@ -30,6 +30,9 @@ export type Players = Record<string, PlayerConfig>;
 
 export const MODIFIER_ORDER: Modifier[] = ["Control", "Alt", "Shift", "Meta"];
 
+const orderModifiers = (list: readonly unknown[]): Modifier[] =>
+  MODIFIER_ORDER.filter((m) => list.includes(m));
+
 const LS = {
   layouts: "h2k.layouts",
   editingLayoutId: "h2k.editingLayoutId",
@@ -43,6 +46,13 @@ const uid = () => crypto.randomUUID();
 
 export function newButton(label = "Button", color = DEFAULT_COLOR): ButtonDef {
   return { id: uid(), label, color, binding: null, playerKey: null };
+}
+
+export function newLayout(
+  name: string,
+  buttons: ButtonDef[] = [newButton("Button 1")],
+): Layout {
+  return { id: uid(), name, buttons };
 }
 
 export function duplicateLayout(layout: Layout, name: string): Layout {
@@ -60,16 +70,14 @@ export function duplicateLayout(layout: Layout, name: string): Layout {
 }
 
 function defaultLayout(): Layout {
-  return {
-    id: uid(),
-    name: "Buzzer",
-    buttons: [{ id: uid(), label: "BUZZ", color: "#ef4444", binding: null, playerKey: " " }],
-  };
+  return newLayout("Buzzer", [
+    { id: uid(), label: "BUZZ", color: "#ef4444", binding: null, playerKey: " " },
+  ]);
 }
 
 export function encodeBinding(b: Binding | null): string {
   if (!b) return "";
-  return [...MODIFIER_ORDER.filter((m) => b.modifiers.includes(m)), b.code].join("+");
+  return [...orderModifiers(b.modifiers), b.code].join("+");
 }
 
 export function decodeBinding(s: unknown): Binding | null {
@@ -77,12 +85,11 @@ export function decodeBinding(s: unknown): Binding | null {
   const parts = s.split("+");
   const code = parts.pop();
   if (!code) return null;
-  return { code, modifiers: MODIFIER_ORDER.filter((m) => parts.includes(m)) };
+  return { code, modifiers: orderModifiers(parts) };
 }
 
 function coerceModifiers(v: unknown): Modifier[] {
-  if (!Array.isArray(v)) return [];
-  return MODIFIER_ORDER.filter((m) => v.includes(m));
+  return Array.isArray(v) ? orderModifiers(v) : [];
 }
 
 function coerceBinding(v: unknown): Binding | null {

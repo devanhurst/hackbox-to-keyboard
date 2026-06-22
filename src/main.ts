@@ -17,6 +17,7 @@ import {
   loadPlayers,
   MODIFIER_ORDER,
   newButton,
+  newLayout,
   saveLayouts,
   savePlayers,
   setEditingLayoutId,
@@ -706,11 +707,7 @@ function setPlayerLayout(userId: string, layoutId: string | null) {
 }
 
 function createLayout() {
-  const layout: Layout = {
-    id: crypto.randomUUID(),
-    name: `Layout ${layouts.length + 1}`,
-    buttons: [newButton("Button 1")],
-  };
+  const layout = newLayout(`Layout ${layouts.length + 1}`);
   layouts.push(layout);
   persistLayouts();
   openEditor(layout.id);
