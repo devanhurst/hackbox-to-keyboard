@@ -28,21 +28,11 @@ import {
   type Players,
 } from "./layouts";
 
-// ---------------------------------------------------------------------------
-// Persistent identity
-//
-// The server treats any socket whose handshake `userId` equals the room's
-// `hostId` as the host (see server RoomService.joinRoom). So we persist a
-// stable hostId, create/reuse a room owned by it, and connect with it.
-// ---------------------------------------------------------------------------
-
 const LS = {
   hostId: "h2k.hostId",
-  playerOrder: "h2k.playerOrder", // host's chosen roster order, userIds
+  playerOrder: "h2k.playerOrder",
 } as const;
 
-// Fixed Hackbox deployment. The HTTP API is served under /api and the realtime
-// relay under /r/<code> on this same apex host (path-routed in production).
 const SERVER_URL = "https://hackbox.ca";
 const API_BASE = `${new URL(SERVER_URL).origin}/api`;
 const RELAY_HOST = new URL(SERVER_URL).host;
@@ -57,13 +47,7 @@ function getHostId(): string {
   return id;
 }
 
-// Persistent state, loaded in bootstrap() at the bottom once storage is
-// hydrated. Populated before the UI is shown.
 let hostId = "";
-
-// ---------------------------------------------------------------------------
-// App state
-// ---------------------------------------------------------------------------
 
 interface Member {
   id: string;
@@ -74,7 +58,7 @@ interface Member {
 let layouts: Layout[] = [];
 let editingLayoutId: string | null = null;
 let players: Players = {};
-let playerOrder: string[] = []; // host-chosen roster order
+let playerOrder: string[] = [];
 
 function loadPlayerOrder(): string[] {
   try {
@@ -91,9 +75,6 @@ function savePlayerOrder() {
   storage.setItem(LS.playerOrder, JSON.stringify(playerOrder));
 }
 
-// Roster in the host's chosen order: ids in `playerOrder` first, then any member
-// not yet ordered appended alphabetically (and added to `playerOrder` so their
-// spot is stable from then on). Stale ids that aren't online linger harmlessly.
 function orderedMembers(): Member[] {
   const all = Object.values(members);
   const known = new Set(playerOrder);
@@ -110,26 +91,18 @@ function orderedMembers(): Member[] {
 
 let socket: HackboxSocket | null = null;
 let members: Record<string, Member> = {};
-const initialized = new Set<string>(); // players we've pushed an initial state to
-// Players who have already joined the *current* room. Unlike `initialized`
-// (cleared whenever a player goes offline so we re-push on reconnect), this
-// survives reconnects and is only reset when a new room starts — so we can tell
-// a genuine first join (→ start blank) from a mid-session reconnect (→ keep the
-// host's assignment).
+const initialized = new Set<string>();
 const joinedThisRoom = new Set<string>();
 
 type View = "players" | "layouts" | "editor";
 let currentView: View = "players";
 
-// What a key capture, if any, is targeting: a button's default key (in the
-// layout editor), or a specific player's override of a button.
 type CaptureTarget =
-  | { kind: "default"; buttonId: string } // a button's default host key (editor)
-  | { kind: "playerKey"; buttonId: string } // the key a player presses on their device
-  | { kind: "player"; userId: string; buttonId: string }; // a per-player host-key override
+  | { kind: "default"; buttonId: string }
+  | { kind: "playerKey"; buttonId: string }
+  | { kind: "player"; userId: string; buttonId: string };
 let capture: CaptureTarget | null = null;
 
-// The layout currently open in the editor (null if none / deleted).
 function editingLayout(): Layout | undefined {
   return editingLayoutId
     ? layouts.find((l) => l.id === editingLayoutId)
@@ -140,7 +113,6 @@ function layoutById(id: string | null | undefined): Layout | undefined {
   return id ? layouts.find((l) => l.id === id) : undefined;
 }
 
-// The layout a given player is assigned, if any.
 function assignedLayout(userId: string): Layout | undefined {
   return layoutById(players[userId]?.layoutId);
 }
@@ -153,22 +125,14 @@ function persistLayouts() {
   saveLayouts(layouts);
 }
 
-// The binding that actually fires for a player's button: their override if set,
-// otherwise the button's default.
 function effectiveBinding(userId: string, button: ButtonDef): Binding | null {
   return players[userId]?.overrides[button.id] ?? button.binding;
 }
 
-// ---------------------------------------------------------------------------
-// DOM
-// ---------------------------------------------------------------------------
-
 const el = {
-  // views
   viewPlayers: document.getElementById("view-players") as HTMLDivElement,
   viewLayouts: document.getElementById("view-layouts") as HTMLDivElement,
   viewEditor: document.getElementById("view-editor") as HTMLDivElement,
-  // players view
   roomCode: document.getElementById("room-code") as HTMLSpanElement,
   newRoomBtn: document.getElementById("new-room-btn") as HTMLButtonElement,
   statusDot: document.getElementById("status-dot") as HTMLSpanElement,
@@ -176,19 +140,16 @@ const el = {
   tabLayouts: document.getElementById("tab-layouts") as HTMLButtonElement,
   playerList: document.getElementById("player-list") as HTMLUListElement,
   emptyHint: document.getElementById("empty-hint") as HTMLParagraphElement,
-  // layouts index view
   newLayoutBtn: document.getElementById("new-layout-btn") as HTMLButtonElement,
   importBtn: document.getElementById("import-btn") as HTMLButtonElement,
   layoutIndex: document.getElementById("layout-index") as HTMLUListElement,
   layoutsEmptyHint: document.getElementById(
     "layouts-empty-hint",
   ) as HTMLParagraphElement,
-  // editor view
   editorBack: document.getElementById("editor-back") as HTMLButtonElement,
   layoutName: document.getElementById("layout-name") as HTMLInputElement,
   layoutButtons: document.getElementById("layout-buttons") as HTMLUListElement,
   addButtonBtn: document.getElementById("add-button-btn") as HTMLButtonElement,
-  // confirm dialog
   confirmDialog: document.getElementById("confirm-dialog") as HTMLDialogElement,
   confirmTitle: document.getElementById("confirm-title") as HTMLHeadingElement,
   confirmMessage: document.getElementById(
@@ -198,16 +159,10 @@ const el = {
   toast: document.getElementById("toast") as HTMLDivElement,
 };
 
-// Promise-based confirmation built on a native <dialog> — Tauri's WebView
-// doesn't implement the synchronous window.confirm(), so it always returned
-// false and (e.g.) Delete silently did nothing. The <form method="dialog">
-// sets returnValue to the clicked button's value; Esc closes with "".
 function confirmDialog(opts: {
   title: string;
   message: string;
   confirmLabel: string;
-  // The confirm button's style. Defaults to "danger" since the dialog's first
-  // use was destructive deletes; pass "primary" for affirmative actions.
   tone?: "danger" | "primary";
 }): Promise<boolean> {
   el.confirmTitle.textContent = opts.title;
@@ -225,9 +180,6 @@ function confirmDialog(opts: {
   });
 }
 
-// The dot's colour conveys the connection state at a glance; the full message
-// (room code, errors, reconnecting) lives in its tooltip since the persistent
-// status text was dropped in favour of the Manage layouts button.
 function setStatus(state: "online" | "offline" | "connecting", text: string) {
   el.statusDot.className = `dot ${state}`;
   el.statusDot.title = text;
@@ -241,19 +193,13 @@ function toast(message: string) {
   toastTimer = setTimeout(() => el.toast.classList.remove("show"), 2200);
 }
 
-// ---------------------------------------------------------------------------
-// View switching
-// ---------------------------------------------------------------------------
-
 function showView(view: View) {
-  // Leaving the editor or a list cancels any in-progress key capture.
   if (view !== currentView) capture = null;
   currentView = view;
   el.viewPlayers.hidden = view !== "players";
   el.viewLayouts.hidden = view !== "layouts";
   el.viewEditor.hidden = view !== "editor";
 
-  // The editor is a drill-down within the Layouts tab, so it keeps that tab lit.
   const layoutsActive = view === "layouts" || view === "editor";
   el.tabPlayers.classList.toggle("active", view === "players");
   el.tabLayouts.classList.toggle("active", layoutsActive);
@@ -271,9 +217,6 @@ function openEditor(id: string) {
   showView("editor");
 }
 
-// --- key labelling --------------------------------------------------------
-
-// Human-friendly label for a KeyboardEvent.code.
 function keyLabel(code: string): string {
   if (code.startsWith("Key")) return code.slice(3);
   if (code.startsWith("Digit")) return code.slice(5);
@@ -298,12 +241,10 @@ const MOD_LABEL: Record<Modifier, string> = {
   Meta: "Meta",
 };
 
-// "Shift+J", "Ctrl+Meta+Space", etc.
 function bindingLabel(b: Binding): string {
   return [...b.modifiers.map((m) => MOD_LABEL[m]), keyLabel(b.code)].join("+");
 }
 
-// Friendly label for a player key (a KeyboardEvent.key value, e.g. " " or "a").
 function playerKeyLabel(key: string): string {
   if (key === " ") return "Space";
   const map: Record<string, string> = {
@@ -323,10 +264,6 @@ function escapeHtml(s: string): string {
   return div.innerHTML;
 }
 
-// ---------------------------------------------------------------------------
-// Render: layouts index
-// ---------------------------------------------------------------------------
-
 function renderLayoutIndex() {
   el.layoutsEmptyHint.style.display = layouts.length ? "none" : "block";
   el.layoutIndex.innerHTML = "";
@@ -339,9 +276,6 @@ function renderLayoutIndexRow(layout: Layout): HTMLLIElement {
   const li = document.createElement("li");
   li.className = "layout-index-row";
   li.dataset.id = layout.id;
-  // Not draggable by default — only a press on the grip arms it (see
-  // wireRowDrag). Otherwise the whole row drags from anywhere and, worse, a
-  // mousedown on Edit/Delete starts a drag instead of firing the click.
 
   const grip = document.createElement("span");
   grip.className = "grip";
@@ -356,8 +290,6 @@ function renderLayoutIndexRow(layout: Layout): HTMLLIElement {
     <span class="layout-sub">${n} button${n === 1 ? "" : "s"}</span>
   `;
 
-  // Per-layout actions, as icon buttons. All layout management lives here on the
-  // index — the editor itself has no duplicate/export/delete controls.
   const edit = iconButton("✎", "Edit layout");
   edit.addEventListener("click", () => openEditor(layout.id));
 
@@ -379,7 +311,6 @@ function renderLayoutIndexRow(layout: Layout): HTMLLIElement {
   return li;
 }
 
-// A square icon button (monochrome glyph) with an accessible label/tooltip.
 function iconButton(
   glyph: string,
   label: string,
@@ -393,15 +324,6 @@ function iconButton(
   return b;
 }
 
-// --- drag reordering ------------------------------------------------------
-
-// Standard HTML5 drag-and-drop reorder: the dragged row moves live in the DOM
-// during dragover; on drop we rebuild the `layouts` array from the DOM order.
-//
-// The row is only `draggable` while the pointer is pressed on the grip handle,
-// so a drag can only start from the handle and clicks on the row's own controls
-// (buttons, dropdowns) aren't swallowed by an accidental drag. `onCommit` runs
-// on drop to persist the new order.
 function wireRowDrag(
   li: HTMLLIElement,
   grip: HTMLElement,
@@ -413,8 +335,6 @@ function wireRowDrag(
   grip.addEventListener("mousedown", () => {
     li.draggable = true;
   });
-  // A press that doesn't turn into a drag (a plain click on the grip) must
-  // still disarm so the row can't be dragged from elsewhere afterwards.
   grip.addEventListener("mouseup", disarm);
 
   li.addEventListener("dragstart", (e) => {
@@ -429,14 +349,9 @@ function wireRowDrag(
   });
 }
 
-// Wire a list container so its `.dragging` child follows the pointer during a
-// drag (rows matched by `rowSelector`). Shared by the layouts and players lists.
 function wireContainerDrag(container: HTMLElement, rowSelector: string) {
   container.addEventListener("dragover", (e) => {
     e.preventDefault();
-    // WebKit (the Tauri macOS WebView) only treats a target as a valid drop zone
-    // when dropEffect is set to match the drag's effectAllowed ("move"); without
-    // this it shows the no-drop cursor and rejects every position.
     if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
     const dragging = container.querySelector(".dragging") as HTMLElement | null;
     if (!dragging) return;
@@ -444,9 +359,6 @@ function wireContainerDrag(container: HTMLElement, rowSelector: string) {
     if (after == null) container.appendChild(dragging);
     else container.insertBefore(dragging, after);
   });
-  // Accept the drop so the row settles in place (and WebKit fires `dragend`
-  // normally) rather than animating back to its origin. Order commits on
-  // `dragend`, which fires after this.
   container.addEventListener("drop", (e) => e.preventDefault());
 }
 
@@ -474,8 +386,6 @@ function dragAfterElement(
   return closest.element;
 }
 
-// Re-derive layout order from the current DOM, persist it, and refresh the
-// player dropdowns (which list layouts in this order).
 function commitIndexOrder() {
   const order = [
     ...el.layoutIndex.querySelectorAll<HTMLElement>(".layout-index-row"),
@@ -484,15 +394,13 @@ function commitIndexOrder() {
   const reordered = order
     .map((id) => byId.get(id!))
     .filter(Boolean) as Layout[];
-  if (reordered.length !== layouts.length) return; // safety: don't lose any
+  if (reordered.length !== layouts.length) return;
   const changed = reordered.some((l, i) => l.id !== layouts[i].id);
   if (!changed) return;
   layouts = reordered;
   persistLayouts();
 }
 
-// Re-derive roster order from the current DOM and persist it. Visible cards take
-// the new order; any ids in `playerOrder` not currently shown keep trailing.
 function commitPlayerOrder() {
   const ids = [...el.playerList.querySelectorAll<HTMLElement>(".player")]
     .map((li) => li.dataset.id)
@@ -502,14 +410,9 @@ function commitPlayerOrder() {
   savePlayerOrder();
 }
 
-// ---------------------------------------------------------------------------
-// Render: layout editor
-// ---------------------------------------------------------------------------
-
 function renderEditor() {
   const layout = editingLayout();
   if (!layout) {
-    // The edited layout is gone (e.g. deleted) — bounce back to the index.
     showView("layouts");
     return;
   }
@@ -526,7 +429,6 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
   const li = document.createElement("li");
   li.className = "layout-button-row";
 
-  // Top line: colour, label, delete.
   const top = document.createElement("div");
   top.className = "lbr-top";
 
@@ -561,12 +463,9 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
 
   top.append(color, label, del);
 
-  // Keys line: the key the player presses on their device, and the default key
-  // pressed on this computer.
   const keys = document.createElement("div");
   keys.className = "lbr-keys";
 
-  // Player key.
   const playerCapturing =
     capture?.kind === "playerKey" && capture.buttonId === button.id;
   const playerField = document.createElement("div");
@@ -600,7 +499,6 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
     playerField.append(clear);
   }
 
-  // Default host key.
   const hostCapturing =
     capture?.kind === "default" && capture.buttonId === button.id;
   const hostField = document.createElement("div");
@@ -628,10 +526,6 @@ function renderButtonRow(layout: Layout, button: ButtonDef): HTMLLIElement {
   return li;
 }
 
-// ---------------------------------------------------------------------------
-// Render: players
-// ---------------------------------------------------------------------------
-
 function renderPlayers() {
   const list = orderedMembers();
   el.emptyHint.style.display = list.length ? "none" : "block";
@@ -647,7 +541,6 @@ function renderPlayerCard(member: Member): HTMLLIElement {
   li.className = "player" + (member.online ? "" : " offline");
   li.dataset.id = member.id;
 
-  // Header: drag grip, status dot, name, and the per-player layout assignment.
   const head = document.createElement("div");
   head.className = "player-head";
   head.innerHTML = `
@@ -681,7 +574,6 @@ function renderPlayerCard(member: Member): HTMLLIElement {
   head.appendChild(select);
   li.appendChild(head);
 
-  // Bindings for the assigned layout, if any.
   const layout = assignedLayout(member.id);
   if (layout && layout.buttons.length) {
     const grid = document.createElement("div");
@@ -715,7 +607,7 @@ function renderPlayerBinding(
     capture.buttonId === button.id;
 
   const keyBtn = document.createElement("button");
-  keyBtn.dataset.buttonId = button.id; // so a tap can flash this exact control
+  keyBtn.dataset.buttonId = button.id;
   keyBtn.className =
     "bind-btn" +
     (isCapturing ? " capturing" : "") +
@@ -740,7 +632,6 @@ function renderPlayerBinding(
 
   wrap.append(name, keyBtn);
 
-  // Allow reverting a per-player override back to the layout default.
   if (override) {
     const reset = document.createElement("button");
     reset.className = "reset-btn";
@@ -758,26 +649,19 @@ function flashPlayer(userId: string) {
   const li = el.playerList.querySelector(`li[data-id="${CSS.escape(userId)}"]`);
   if (!li) return;
   li.classList.remove("hit");
-  void (li as HTMLElement).offsetWidth; // restart the CSS animation
+  void (li as HTMLElement).offsetWidth;
   li.classList.add("hit");
 }
 
-// Pulse the specific button's key control on the player's card, so the host can
-// see *which* button was tapped (not just which player). No-ops if that card
-// isn't currently in the DOM (e.g. the host is on the Layouts tab).
 function flashButton(userId: string, buttonId: string) {
   const btn = el.playerList.querySelector<HTMLElement>(
     `li[data-id="${CSS.escape(userId)}"] .bind-btn[data-button-id="${CSS.escape(buttonId)}"]`,
   );
   if (!btn) return;
   btn.classList.remove("hit");
-  void btn.offsetWidth; // restart the CSS animation
+  void btn.offsetWidth;
   btn.classList.add("hit");
 }
-
-// ---------------------------------------------------------------------------
-// Layout & binding mutations
-// ---------------------------------------------------------------------------
 
 function addButton() {
   const layout = editingLayout();
@@ -790,7 +674,6 @@ function addButton() {
 
 function removeButton(layout: Layout, buttonId: string) {
   layout.buttons = layout.buttons.filter((b) => b.id !== buttonId);
-  // Drop any per-player overrides for the removed button.
   for (const config of Object.values(players))
     delete config.overrides[buttonId];
   persistLayouts();
@@ -799,8 +682,6 @@ function removeButton(layout: Layout, buttonId: string) {
   void pushLayoutToAssigned(layout.id);
 }
 
-// Set (or clear) the key a player presses on their own device for a button.
-// Changing it alters the pushed `keys`, so re-push to assigned players.
 function setPlayerKey(layout: Layout, button: ButtonDef, key: string | null) {
   button.playerKey = key;
   persistLayouts();
@@ -842,7 +723,6 @@ function duplicateLayoutById(id: string) {
   if (idx === -1) return;
   const source = layouts[idx];
   const copy = duplicateLayout(source, `${source.name} copy`);
-  // Drop the copy right after its original so it's easy to find in the list.
   layouts.splice(idx + 1, 0, copy);
   persistLayouts();
   renderLayoutIndex();
@@ -862,7 +742,6 @@ async function deleteLayout(id: string) {
   layouts = layouts.filter((l) => l.id !== id);
   persistLayouts();
 
-  // Unassign anyone who was on it; they fall back to a blank screen.
   const affected: string[] = [];
   for (const [userId, config] of Object.entries(players)) {
     if (config.layoutId === id) {
@@ -877,13 +756,6 @@ async function deleteLayout(id: string) {
   for (const userId of affected) pushToPlayer(userId);
 }
 
-// ---------------------------------------------------------------------------
-// Key capture: bind the next physical key to the current capture target
-// ---------------------------------------------------------------------------
-
-// Codes for the modifier keys themselves — pressing one alone shouldn't finish
-// the capture; we wait for the main (non-modifier) key and record whichever
-// modifiers are held at that moment.
 const MODIFIER_CODES = new Set([
   "ShiftLeft",
   "ShiftRight",
@@ -903,10 +775,8 @@ window.addEventListener("keydown", (e) => {
     rerenderCaptureView();
     return;
   }
-  if (MODIFIER_CODES.has(e.code)) return; // hold for the main key
+  if (MODIFIER_CODES.has(e.code)) return;
 
-  // Player key: store the produced KeyboardEvent.key (what the hackbox client
-  // matches against), with no modifiers — ChoiceButton ignores them.
   if (capture.kind === "playerKey") {
     const layout = editingLayout();
     const button = layout?.buttons.find((b) => b.id === capture!.buttonId);
@@ -925,7 +795,6 @@ window.addEventListener("keydown", (e) => {
   if (e.altKey) modifiers.push("Alt");
   if (e.shiftKey) modifiers.push("Shift");
   if (e.metaKey) modifiers.push("Meta");
-  // Keep modifiers in a stable, canonical order.
   const ordered = MODIFIER_ORDER.filter((m) => modifiers.includes(m));
   const binding: Binding = { modifiers: ordered, code: e.code };
 
@@ -946,15 +815,10 @@ window.addEventListener("keydown", (e) => {
   rerenderCaptureView();
 });
 
-// Re-render whichever view owns the capture UI.
 function rerenderCaptureView() {
   if (currentView === "editor") renderEditor();
   else renderPlayers();
 }
-
-// ---------------------------------------------------------------------------
-// OS keypress dispatch (Rust/enigo via Tauri command)
-// ---------------------------------------------------------------------------
 
 async function pressKey(b: Binding) {
   try {
@@ -964,14 +828,6 @@ async function pressKey(b: Binding) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Room lifecycle
-// ---------------------------------------------------------------------------
-
-// Allocate a brand-new room owned by this host. We deliberately create a fresh
-// code on every launch rather than reusing a stored one, so the room never
-// outlives the app session. `apiBase` is the HTTP front door, e.g.
-// "https://app.hackbox.ca/api".
 async function createRoom(apiBase: string): Promise<string> {
   const res = await fetch(`${apiBase}/rooms`, {
     method: "POST",
@@ -985,9 +841,6 @@ async function createRoom(apiBase: string): Promise<string> {
   return data.roomCode;
 }
 
-// Push a player's current state: their assigned layout, or a blank screen if
-// they have none. Buttons are pushed `persistent`, so this is only needed when
-// the player's layout actually changes — not to re-arm after each tap.
 function pushToPlayer(userId: string) {
   if (!socket) return;
   const name = members[userId]?.name || "";
@@ -1000,8 +853,6 @@ function pushToPlayer(userId: string) {
   });
 }
 
-// Re-push to every online player currently assigned the given layout (after its
-// structure — labels/colours/buttons — changed).
 function pushLayoutToAssigned(layoutId: string) {
   if (!socket) return;
   for (const m of Object.values(members)) {
@@ -1009,8 +860,6 @@ function pushLayoutToAssigned(layoutId: string) {
   }
 }
 
-// Label/colour edits arrive keystroke-by-keystroke; debounce the re-push so we
-// don't spam the relay while the host is typing.
 let repushTimer: ReturnType<typeof setTimeout> | null = null;
 let repushLayoutId: string | null = null;
 function scheduleRepushLayout(layoutId: string) {
@@ -1022,9 +871,6 @@ function scheduleRepushLayout(layoutId: string) {
   }, 350);
 }
 
-// Reasons partysocket recovers from on its own (it reconnects and re-fires
-// "connect"); anything else is a fatal close (room expired/gone, duplicate
-// device) that needs a brand-new room.
 const TRANSIENT_REASONS = new Set(["transport close", "transport error"]);
 let recreateTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1032,12 +878,11 @@ function scheduleRecreate() {
   if (recreateTimer !== null) return;
   recreateTimer = setTimeout(() => {
     recreateTimer = null;
-    void connect(); // connect() always allocates a fresh room
+    void connect();
   }, 3000);
 }
 
 async function connect() {
-  // Cancel a queued auto-recreate; we're (re)connecting now.
   if (recreateTimer !== null) {
     clearTimeout(recreateTimer);
     recreateTimer = null;
@@ -1049,14 +894,12 @@ async function connect() {
     roomCode = await createRoom(API_BASE);
   } catch (err) {
     setStatus("offline", `Room error: ${(err as Error).message}`);
-    scheduleRecreate(); // retry shortly; no manual reconnect button
+    scheduleRecreate();
     return;
   }
 
   el.roomCode.textContent = roomCode;
 
-  // A brand-new room: every player that joins it counts as a fresh join, so
-  // they all start blank regardless of earlier assignments.
   joinedThisRoom.clear();
   initialized.clear();
 
@@ -1075,11 +918,9 @@ async function connect() {
   socket.on("disconnect", (reason) => {
     const r = String(reason);
     if (TRANSIENT_REASONS.has(r)) {
-      // partysocket is already reconnecting under the hood.
       setStatus("connecting", "Reconnecting…");
       return;
     }
-    // Fatal: the room is gone. Spin up a new one automatically.
     setStatus("offline", `Disconnected: ${r}`);
     scheduleRecreate();
   });
@@ -1089,14 +930,10 @@ async function connect() {
     setStatus("offline", message || "Server error");
   });
 
-  // Roster updates: relay sends the full member map each time it changes.
   socket.on("state.host", (payload) => {
     members = (payload as { members?: Record<string, Member> }).members || {};
     for (const m of Object.values(members)) {
       if (m.online) {
-        // First time we see this player in this room: clear any layout they
-        // carried over from a previous room/session — players always start
-        // blank on join. (A reconnect keeps whatever the host assigned since.)
         if (!joinedThisRoom.has(m.id)) {
           joinedThisRoom.add(m.id);
           const config = players[m.id];
@@ -1116,20 +953,12 @@ async function connect() {
     if (currentView === "players") renderPlayers();
   });
 
-  // A player tapped one of their buttons. The Button echoes back the resolved
-  // key we pushed as `value`, so we just press it — no button identity on the
-  // wire, no lookup needed for the keypress. (No re-push needed either: buttons
-  // are pushed `persistent`, so they stay armed for repeated taps.)
   socket.on("msg", (payload) => {
     const p = payload as { from?: string; value?: string };
     const from = p?.from;
     if (!from) return;
     const binding = decodeBinding(p.value);
     if (binding) void pressKey(binding);
-    // Best-effort cosmetic: light the button whose resolved key matches what
-    // came back, so the host sees which button fired. Ambiguous when two
-    // buttons resolve to the same key (first match wins) — harmless, it's only
-    // a UI pulse.
     const layout = assignedLayout(from);
     const button = layout?.buttons.find(
       (b) => encodeBinding(effectiveBinding(from, b)) === p.value,
@@ -1139,8 +968,6 @@ async function connect() {
   });
 }
 
-// Discard the current room and spin up a fresh one on demand. (A fresh room is
-// also allocated on every launch.) Existing players need the new code to rejoin.
 async function newRoom() {
   el.newRoomBtn.disabled = true;
   members = {};
@@ -1151,17 +978,13 @@ async function newRoom() {
   el.newRoomBtn.disabled = false;
 }
 
-// ---------------------------------------------------------------------------
-// Export / import
-// ---------------------------------------------------------------------------
-
 async function exportLayoutFile(layout: Layout) {
   const safeName = (layout.name || "layout").replace(/[^a-z0-9-_]+/gi, "-");
   const path = await save({
     defaultPath: `${safeName}.hackboxkb.json`,
     filters: [{ name: "Hackbox Layout", extensions: ["json"] }],
   });
-  if (!path) return; // user cancelled the save dialog
+  if (!path) return;
   try {
     await writeTextFile(path, exportLayout(layout));
     toast("Layout exported");
@@ -1176,7 +999,7 @@ async function openImport() {
     directory: false,
     filters: [{ name: "Hackbox Layout", extensions: ["json"] }],
   });
-  if (typeof path !== "string") return; // cancelled
+  if (typeof path !== "string") return;
   let json: string;
   try {
     json = await readTextFile(path);
@@ -1193,26 +1016,19 @@ function applyImport(json: string) {
     layouts.push(layout);
     persistLayouts();
     toast(`Imported "${layout.name}"`);
-    openEditor(layout.id); // jump straight into editing the imported layout
+    openEditor(layout.id);
   } catch (err) {
     toast((err as Error).message);
   }
 }
 
-// ---------------------------------------------------------------------------
-// Wire up DOM events
-// ---------------------------------------------------------------------------
-
-// persistent header + tabs
 el.newRoomBtn.addEventListener("click", () => void newRoom());
 el.tabPlayers.addEventListener("click", () => showView("players"));
 el.tabLayouts.addEventListener("click", () => showView("layouts"));
 
-// layouts index view
 el.newLayoutBtn.addEventListener("click", () => createLayout());
 el.importBtn.addEventListener("click", () => void openImport());
 
-// editor view
 el.editorBack.addEventListener("click", () => showView("layouts"));
 el.layoutName.addEventListener("input", () => {
   const layout = editingLayout();
@@ -1223,15 +1039,6 @@ el.layoutName.addEventListener("input", () => {
 });
 el.addButtonBtn.addEventListener("click", () => addButton());
 
-// ---------------------------------------------------------------------------
-// Auto-update
-//
-// On launch, ask the updater plugin whether a newer signed build exists (it
-// fetches the `latest.json` manifest configured in tauri.conf.json). If so,
-// prompt the user; on confirm, download + install the verified update and
-// relaunch into it. Runs best-effort: any failure (offline, dev build with no
-// updater configured, etc.) is logged and swallowed so it never blocks the app.
-// ---------------------------------------------------------------------------
 async function checkForUpdates(): Promise<void> {
   try {
     const update = await check();
@@ -1249,17 +1056,10 @@ async function checkForUpdates(): Promise<void> {
     await update.downloadAndInstall();
     await relaunch();
   } catch (err) {
-    // Don't surface to the user — a failed update check shouldn't look like an
-    // app error. Most commonly this is just being offline or a non-bundled
-    // dev build where the updater isn't active.
     console.warn("Update check failed:", err);
   }
 }
 
-// Hydrate persistent storage (migrating any legacy localStorage on first run),
-// load saved config, then show the home view, create/reuse a room, and connect.
-// Done as an async bootstrap rather than top-level await so the Vite build
-// target can stay broad for older WebViews.
 async function bootstrap() {
   await initStorage();
   hostId = getHostId();
