@@ -1,42 +1,17 @@
-// ---------------------------------------------------------------------------
-// Layouts & per-player config.
-//
-// A *layout* is a named set of buttons. Each button has a label (what the
-// player sees), a colour, and an optional *default* key binding. Baking keys
-// into a layout makes it self-contained and shareable: e.g. "Duel Player 1" and
-// "Duel Player 2" are two six-button layouts with consistent, different keymaps.
-//
-// A *player config* (keyed by userId) records which layout, if any, a player is
-// assigned, plus any per-player *overrides* of a button's default key. Effective
-// key = override ?? button default. Players start with NO config — they see
-// nothing until the host assigns them a layout, and different players can be on
-// different layouts.
-//
-// Layouts can be exported/imported as JSON to share with friends (keys
-// included). Player config is never exported (it's tied to specific userIds on
-// this machine).
-// ---------------------------------------------------------------------------
-
 import { storage } from "./storage";
 
 export type Modifier = "Control" | "Alt" | "Shift" | "Meta";
 
-// A binding is a main key (KeyboardEvent.code, e.g. "KeyA") plus zero or more
-// modifiers held down around it.
 export interface Binding {
   modifiers: Modifier[];
   code: string;
 }
 
 export interface ButtonDef {
-  id: string; // stable id within the layout; used as the button's event name
-  label: string; // text shown on the player's button
-  color: string; // button background colour
-  binding: Binding | null; // default host key injected on tap (overridable per-player)
-  // Key the PLAYER presses on their own device to trigger this button, as a
-  // KeyboardEvent.key value (e.g. " " for space). Shared by all players on the
-  // layout. null = tap only. Distinct from `binding`, the key pressed on the
-  // host machine.
+  id: string;
+  label: string;
+  color: string;
+  binding: Binding | null;
   playerKey: string | null;
 }
 
@@ -46,23 +21,23 @@ export interface Layout {
   buttons: ButtonDef[];
 }
 
-// A player's assignment: which layout they're on (null = none) plus any
-// per-player overrides of a button's default key, keyed by buttonId.
 export interface PlayerConfig {
   layoutId: string | null;
   overrides: Record<string, Binding>;
 }
 
-// userId -> PlayerConfig.
 export type Players = Record<string, PlayerConfig>;
 
 export const MODIFIER_ORDER: Modifier[] = ["Control", "Alt", "Shift", "Meta"];
+
+const orderModifiers = (list: readonly unknown[]): Modifier[] =>
+  MODIFIER_ORDER.filter((m) => list.includes(m));
 
 const LS = {
   layouts: "h2k.layouts",
   editingLayoutId: "h2k.editingLayoutId",
   players: "h2k.players",
-  legacyBindings: "h2k.bindings", // original single-button shape: userId -> Binding
+  legacyBindings: "h2k.bindings",
 } as const;
 
 const DEFAULT_COLOR = "#7c5cff";
@@ -73,9 +48,13 @@ export function newButton(label = "Button", color = DEFAULT_COLOR): ButtonDef {
   return { id: uid(), label, color, binding: null, playerKey: null };
 }
 
-// Clone a layout into an independent copy: fresh layout id and fresh button ids
-// (so per-player overrides, which are keyed by buttonId, never bleed between the
-// original and the copy). Default keys, labels, and colours are preserved.
+export function newLayout(
+  name: string,
+  buttons: ButtonDef[] = [newButton("Button 1")],
+): Layout {
+  return { id: uid(), name, buttons };
+}
+
 export function duplicateLayout(layout: Layout, name: string): Layout {
   return {
     id: uid(),
@@ -91,32 +70,14 @@ export function duplicateLayout(layout: Layout, name: string): Layout {
 }
 
 function defaultLayout(): Layout {
-  // Ships with the app as a ready-to-use starting point: a single red BUZZ
-  // button the player fires with the spacebar (" " is the KeyboardEvent.key for
-  // Space), with no host key bound by default.
-  return {
-    id: uid(),
-    name: "Buzzer",
-    buttons: [{ id: uid(), label: "BUZZ", color: "#ef4444", binding: null, playerKey: " " }],
-  };
+  return newLayout("Buzzer", [
+    { id: uid(), label: "BUZZ", color: "#ef4444", binding: null, playerKey: " " },
+  ]);
 }
 
-// --- wire encoding --------------------------------------------------------
-
-// The host pushes each button's *resolved* key (its per-player override, else
-// the layout default) to the player as the Button's `value`. The player echoes
-// that value back untouched on tap, so the value IS the keypress: the host
-// presses whatever comes back, with no button lookup and no shared identity on
-// the wire. Two buttons that resolve to the same key legitimately send the same
-// value — that's fine, the host presses the same key either way.
-//
-// Format: modifiers (canonical order) then the KeyboardEvent.code, joined by
-// "+", e.g. "Control+Shift+KeyA" or just "KeyA". A tap-only button (no host
-// key) encodes to "" and fires nothing. No KeyboardEvent.code contains "+", so
-// the round-trip split is unambiguous.
 export function encodeBinding(b: Binding | null): string {
   if (!b) return "";
-  return [...MODIFIER_ORDER.filter((m) => b.modifiers.includes(m)), b.code].join("+");
+  return [...orderModifiers(b.modifiers), b.code].join("+");
 }
 
 export function decodeBinding(s: unknown): Binding | null {
@@ -124,14 +85,11 @@ export function decodeBinding(s: unknown): Binding | null {
   const parts = s.split("+");
   const code = parts.pop();
   if (!code) return null;
-  return { code, modifiers: MODIFIER_ORDER.filter((m) => parts.includes(m)) };
+  return { code, modifiers: orderModifiers(parts) };
 }
 
-// --- validation -----------------------------------------------------------
-
 function coerceModifiers(v: unknown): Modifier[] {
-  if (!Array.isArray(v)) return [];
-  return MODIFIER_ORDER.filter((m) => v.includes(m));
+  return Array.isArray(v) ? orderModifiers(v) : [];
 }
 
 function coerceBinding(v: unknown): Binding | null {
@@ -166,23 +124,15 @@ function coerceLayout(v: unknown): Layout | null {
   };
 }
 
-// --- persistence ----------------------------------------------------------
-
 export function loadLayouts(): Layout[] {
   const stored = storage.getItem(LS.layouts);
   if (stored !== null) {
-    // The key exists — respect whatever's there, including an empty list (the
-    // user may have deleted every layout).
     try {
       const raw = JSON.parse(stored);
       if (Array.isArray(raw)) return raw.map(coerceLayout).filter(Boolean) as Layout[];
-    } catch {
-      /* corrupt — fall through to seed */
-    }
+    } catch {}
   }
 
-  // First run: seed a starter layout and migrate any legacy single-button
-  // bindings into per-player config assigned to it.
   const layout = defaultLayout();
   migrateLegacyBindings(layout.id, layout.buttons[0].id);
   saveLayouts([layout]);
@@ -231,9 +181,6 @@ export function savePlayers(players: Players) {
   storage.setItem(LS.players, JSON.stringify(players));
 }
 
-// Migrate the original `userId -> Binding` store (a single "press" button) into
-// per-player config assigned to the seeded layout, with the old key kept as a
-// per-player override.
 function migrateLegacyBindings(layoutId: string, buttonId: string) {
   let raw: Record<string, unknown>;
   try {
@@ -243,7 +190,6 @@ function migrateLegacyBindings(layoutId: string, buttonId: string) {
   }
   const players: Players = {};
   for (const [userId, v] of Object.entries(raw)) {
-    // Old shapes: plain "KeyA" string, or { modifiers, code }.
     const binding =
       typeof v === "string" ? { code: v, modifiers: [] as Modifier[] } : coerceBinding(v);
     if (binding) players[userId] = { layoutId, overrides: { [buttonId]: binding } };
@@ -252,13 +198,9 @@ function migrateLegacyBindings(layoutId: string, buttonId: string) {
   storage.removeItem(LS.legacyBindings);
 }
 
-// --- export / import ------------------------------------------------------
-
 const EXPORT_TYPE = "hackbox-keyboard-layout";
 const EXPORT_VERSION = 1;
 
-// Serialize a layout (buttons + labels + colours + default keys) for sharing.
-// Per-player config is never involved.
 export function exportLayout(layout: Layout): string {
   return JSON.stringify(
     { type: EXPORT_TYPE, version: EXPORT_VERSION, layout },
@@ -267,9 +209,6 @@ export function exportLayout(layout: Layout): string {
   );
 }
 
-// Parse a shared layout. Accepts both the wrapped export envelope and a bare
-// layout object. Returns a layout with a fresh id so it never clobbers an
-// existing one. Throws on anything unrecognizable.
 export function importLayout(json: string): Layout {
   let parsed: unknown;
   try {
@@ -286,6 +225,6 @@ export function importLayout(json: string): Layout {
   if (!layout || !layout.buttons.length) {
     throw new Error("No buttons found in this layout");
   }
-  layout.id = uid(); // avoid colliding with an existing layout
+  layout.id = uid();
   return layout;
 }
