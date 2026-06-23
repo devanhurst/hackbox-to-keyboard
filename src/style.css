@@ -65,6 +65,67 @@ body {
   gap: 0.6rem;
 }
 
+/* Master forwarding switch in the appbar (paused / live). */
+.forwarding-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--panel-2);
+  border: 1px solid #3a3a47;
+  border-radius: 999px;
+  padding: 0.25rem 0.65rem 0.25rem 0.3rem;
+  color: var(--muted);
+  transition: color 0.15s, border-color 0.15s;
+}
+.forwarding-toggle:hover {
+  border-color: #4a4a57;
+}
+.forwarding-toggle.on {
+  color: var(--online);
+  border-color: var(--online);
+}
+.ft-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Shared track + knob for the master and per-player switches. */
+.ft-switch,
+.player-toggle {
+  position: relative;
+  width: 2.1rem;
+  height: 1.2rem;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid #4a4a57;
+  padding: 0;
+  flex: none;
+}
+.ft-switch::after,
+.player-toggle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  background: var(--muted);
+  transform: translateY(-50%);
+  transition: transform 0.15s, background 0.15s;
+}
+.forwarding-toggle.on .ft-switch,
+.player-toggle.on {
+  background: rgba(52, 211, 153, 0.2);
+  border-color: var(--online);
+}
+.forwarding-toggle.on .ft-switch::after,
+.player-toggle.on::after {
+  background: var(--online);
+  transform: translate(0.9rem, -50%);
+}
+
 /* Two-tab navigation between Players and Layouts. */
 .tabs {
   display: flex;

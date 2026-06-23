@@ -38,9 +38,21 @@ lives in a WebView, and key injection is done in Rust via
    screen.)
 4. When a player taps, the relay forwards a `msg` frame carrying the button's id.
    The app resolves the binding for that player+button (the per-player override
-   if set, otherwise the button's default) and calls the `press_key` Rust
-   command, which uses `enigo` to tap the key system-wide. It then re-pushes the
-   layout to re-arm the buttons.
+   if set, otherwise the button's default) and — if forwarding is allowed (see
+   below) — calls the `press_key` Rust command, which uses `enigo` to tap the key
+   system-wide. It then re-pushes the layout to re-arm the buttons.
+
+Keypress forwarding is gated by two switches. A **master switch** in the app bar
+arms or pauses *all* forwarding; it starts **live** on launch and every new room,
+and the host can pause it at any time to stop players driving the machine before
+they're ready. Each player card also has its own **per-player switch** (on by
+default) to mute one player individually. A tap only injects a key when the
+master switch is live *and* that player isn't muted. While paused or muted, the
+press is ignored but
+the host still sees the button/player flash, so they can watch who's connected
+and pressing without it touching their machine. The master state is in-memory
+only (never persisted); per-player switches are saved with the rest of the
+player config.
 
 Hackbox migrated from socket.io to a Cloudflare relay (a Durable Object speaking
 raw WebSocket); the connector in [`src/hackboxSocket.ts`](src/hackboxSocket.ts)

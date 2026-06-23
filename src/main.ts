@@ -95,6 +95,10 @@ let members: Record<string, Member> = {};
 const initialized = new Set<string>();
 const joinedThisRoom = new Set<string>();
 
+// Master switch for keypress forwarding. Live on launch and every new room;
+// in-memory only (never persisted), so it always starts in the same state.
+let forwardingEnabled = true;
+
 type View = "players" | "layouts" | "editor";
 let currentView: View = "players";
 
@@ -119,7 +123,7 @@ function assignedLayout(userId: string): Layout | undefined {
 }
 
 function ensurePlayer(userId: string): PlayerConfig {
-  return (players[userId] ||= { layoutId: null, overrides: {} });
+  return (players[userId] ||= { layoutId: null, overrides: {}, enabled: true });
 }
 
 function persistLayouts() {
@@ -130,12 +134,24 @@ function effectiveBinding(userId: string, button: ButtonDef): Binding | null {
   return players[userId]?.overrides[button.id] ?? button.binding;
 }
 
+// A press only reaches the keyboard when the master switch is on AND this
+// player isn't individually muted (missing config counts as enabled).
+function forwardingAllowed(userId: string): boolean {
+  return forwardingEnabled && players[userId]?.enabled !== false;
+}
+
 const el = {
   viewPlayers: document.getElementById("view-players") as HTMLDivElement,
   viewLayouts: document.getElementById("view-layouts") as HTMLDivElement,
   viewEditor: document.getElementById("view-editor") as HTMLDivElement,
   roomCode: document.getElementById("room-code") as HTMLSpanElement,
   newRoomBtn: document.getElementById("new-room-btn") as HTMLButtonElement,
+  forwardingToggle: document.getElementById(
+    "forwarding-toggle",
+  ) as HTMLButtonElement,
+  forwardingLabel: document.getElementById(
+    "forwarding-label",
+  ) as HTMLSpanElement,
   statusDot: document.getElementById("status-dot") as HTMLSpanElement,
   tabPlayers: document.getElementById("tab-players") as HTMLButtonElement,
   tabLayouts: document.getElementById("tab-layouts") as HTMLButtonElement,
@@ -184,6 +200,20 @@ function confirmDialog(opts: {
 function setStatus(state: "online" | "offline" | "connecting", text: string) {
   el.statusDot.className = `dot ${state}`;
   el.statusDot.title = text;
+}
+
+function renderForwarding() {
+  el.forwardingToggle.classList.toggle("on", forwardingEnabled);
+  el.forwardingToggle.setAttribute("aria-checked", String(forwardingEnabled));
+  el.forwardingLabel.textContent = forwardingEnabled ? "Live" : "Paused";
+  el.forwardingToggle.title = forwardingEnabled
+    ? "Forwarding is live — enabled players' presses reach your keyboard"
+    : "Forwarding is paused — players' presses won't reach your keyboard";
+}
+
+function setForwarding(enabled: boolean) {
+  forwardingEnabled = enabled;
+  renderForwarding();
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -573,6 +603,20 @@ function renderPlayerCard(member: Member): HTMLLIElement {
     setPlayerLayout(member.id, select.value || null),
   );
   head.appendChild(select);
+
+  const enabled = players[member.id]?.enabled !== false;
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "player-toggle" + (enabled ? " on" : "");
+  toggle.setAttribute("role", "switch");
+  toggle.setAttribute("aria-checked", String(enabled));
+  toggle.setAttribute("aria-label", "Forward this player's presses");
+  toggle.title = enabled
+    ? "Forwarding this player's presses (when the master switch is live)"
+    : "This player is muted — their presses are ignored";
+  toggle.addEventListener("click", () => togglePlayerEnabled(member.id));
+  head.appendChild(toggle);
+
   li.appendChild(head);
 
   const layout = assignedLayout(member.id);
@@ -694,6 +738,13 @@ function clearOverride(userId: string, buttonId: string) {
   const config = players[userId];
   if (!config) return;
   delete config.overrides[buttonId];
+  savePlayers(players);
+  renderPlayers();
+}
+
+function togglePlayerEnabled(userId: string) {
+  const config = ensurePlayer(userId);
+  config.enabled = !config.enabled;
   savePlayers(players);
   renderPlayers();
 }
@@ -885,6 +936,8 @@ async function connect() {
     recreateTimer = null;
   }
   setStatus("connecting", "Connecting…");
+  // Every connect mints a fresh room code; reset forwarding to its default.
+  setForwarding(true);
 
   let roomCode: string;
   try {
@@ -956,7 +1009,9 @@ async function connect() {
     if (!from) return;
     const wire = p.value || p.event;
     const binding = decodeBinding(wire);
-    if (binding) void pressKey(binding);
+    // Always flash so the host can see who's pressing, even while paused —
+    // only the actual keypress is gated.
+    if (binding && forwardingAllowed(from)) void pressKey(binding);
     const layout = assignedLayout(from);
     const button = layout?.buttons.find(
       (b) => encodeBinding(effectiveBinding(from, b)) === wire,
@@ -1021,6 +1076,9 @@ function applyImport(json: string) {
 }
 
 el.newRoomBtn.addEventListener("click", () => void newRoom());
+el.forwardingToggle.addEventListener("click", () =>
+  setForwarding(!forwardingEnabled),
+);
 el.tabPlayers.addEventListener("click", () => showView("players"));
 el.tabLayouts.addEventListener("click", () => showView("layouts"));
 

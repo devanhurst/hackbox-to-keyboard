@@ -24,6 +24,8 @@ export interface Layout {
 export interface PlayerConfig {
   layoutId: string | null;
   overrides: Record<string, Binding>;
+  /** Whether this player's presses reach the keyboard (gated by the master switch too). */
+  enabled: boolean;
 }
 
 export type Players = Record<string, PlayerConfig>;
@@ -174,6 +176,7 @@ export function loadPlayers(): Players {
     out[userId] = {
       layoutId: typeof c.layoutId === "string" ? c.layoutId : null,
       overrides,
+      enabled: c.enabled !== false,
     };
   }
   return out;
@@ -194,7 +197,8 @@ function migrateLegacyBindings(layoutId: string, buttonId: string) {
   for (const [userId, v] of Object.entries(raw)) {
     const binding =
       typeof v === "string" ? { code: v, modifiers: [] as Modifier[] } : coerceBinding(v);
-    if (binding) players[userId] = { layoutId, overrides: { [buttonId]: binding } };
+    if (binding)
+      players[userId] = { layoutId, overrides: { [buttonId]: binding }, enabled: true };
   }
   if (Object.keys(players).length) savePlayers(players);
   storage.removeItem(LS.legacyBindings);

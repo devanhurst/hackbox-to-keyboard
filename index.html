@@ -10,7 +10,18 @@
         <main id="app">
             <!-- ===================== Persistent header ===================== -->
             <header class="appbar">
-                <h1>Hackbox&nbsp;→&nbsp;Keyboard</h1>
+                <h1>HB&nbsp;→&nbsp;KB</h1>
+                <button
+                    id="forwarding-toggle"
+                    class="forwarding-toggle on"
+                    type="button"
+                    role="switch"
+                    aria-checked="true"
+                    title="Forwarding is live — enabled players' presses reach your keyboard"
+                >
+                    <span class="ft-switch"></span>
+                    <span id="forwarding-label" class="ft-label">Live</span>
+                </button>
                 <div class="room-control">
                     <span
                         id="status-dot"
