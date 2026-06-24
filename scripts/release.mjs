@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // One-command release for hackbox-to-keyboard.
 //
-//   npm run release <patch|minor|major|X.Y.Z> [--push]
+//   npm run release <patch|minor|major|X.Y.Z> [-- --push]
 //
 // Bumps the version in the four sites that MUST stay in lockstep, commits the
 // change as `chore: release vX.Y.Z`, and creates an annotated `vX.Y.Z` tag.
@@ -35,7 +35,7 @@ function usage(msg) {
   if (msg) console.error(`\nerror: ${msg}\n`);
   console.error(
     [
-      "Usage: npm run release <patch|minor|major|X.Y.Z> [--push]",
+      "Usage: npm run release <patch|minor|major|X.Y.Z> [-- --push]",
       "",
       "  patch|minor|major   bump the current version by that semver part",
       "  X.Y.Z               set an explicit version (must be > current)",

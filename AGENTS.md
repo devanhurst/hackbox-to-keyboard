@@ -9,12 +9,12 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 Cut a release with one command (run on a clean `main`):
 
 ```bash
-npm run release <patch|minor|major|X.Y.Z>   # add --push to push immediately
+npm run release <patch|minor|major|X.Y.Z>   # add `-- --push` to push immediately
 ```
 
 `scripts/release.mjs` (dependency-free Node ESM) bumps the version, commits
 `chore: release vX.Y.Z`, and creates an annotated `vX.Y.Z` tag. It does **not**
-push unless `--push` is given — pushing the tag is what triggers
+push unless `-- --push` is given — pushing the tag is what triggers
 `.github/workflows/release.yml` (signed macOS universal + Windows build). After
 it runs, push with `git push --follow-tags origin main`.
 

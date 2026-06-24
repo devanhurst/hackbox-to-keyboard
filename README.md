@@ -255,7 +255,7 @@ a non-increasing version. Nothing is pushed unless you pass `--push`, so a
 release is never triggered by accident:
 
 ```bash
-npm run release patch --push     # bump, commit, tag, AND push in one step
+npm run release patch -- --push  # bump, commit, tag, AND push in one step
 ```
 
 To regenerate the platform icon set from a source image:
