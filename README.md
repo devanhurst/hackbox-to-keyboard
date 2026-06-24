@@ -237,15 +237,28 @@ unsigned `.exe`; an OV/EV code-signing cert removes that.
 ### CI (both platforms)
 
 `.github/workflows/release.yml` builds macOS (universal) + Windows installers
-and attaches them to a **draft** GitHub release whenever you push a version tag:
+and attaches them to a **draft** GitHub release whenever you push a version tag.
+
+Cut a release with a single command (run on a clean `main`):
 
 ```bash
-npm version patch        # bumps package.json, creates a commit + tag
-git push --follow-tags
+npm run release patch            # or: minor | major | an explicit X.Y.Z
+git push --follow-tags origin main   # this push triggers the release build
 ```
 
-Keep `src-tauri/tauri.conf.json`'s `version` in sync with `package.json`. To
-regenerate the platform icon set from a source image:
+`npm run release` bumps the version in **all four** places that must stay in
+lockstep — `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
+and the `hackbox-to-keyboard` entry in `src-tauri/Cargo.lock` — then commits
+`chore: release vX.Y.Z` and creates the annotated `vX.Y.Z` tag. It cross-checks
+that the four sites agree and refuses to run on a dirty tree, off `main`, or with
+a non-increasing version. Nothing is pushed unless you pass `--push`, so a
+release is never triggered by accident:
+
+```bash
+npm run release patch --push     # bump, commit, tag, AND push in one step
+```
+
+To regenerate the platform icon set from a source image:
 
 ```bash
 npm run tauri icon path/to/source.png
