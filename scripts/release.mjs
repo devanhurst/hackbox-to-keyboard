@@ -1,23 +1,36 @@
 #!/usr/bin/env node
-// One-command release for hackbox-to-keyboard.
+// Version-bump helper for hackbox-to-keyboard releases.
 //
-//   npm run release <patch|minor|major|X.Y.Z> [-- --push]
+// Releases are AUTOMATIC: every merge to `main` runs
+// .github/workflows/release.yml, which invokes this script as
 //
-// Bumps the version in the four sites that MUST stay in lockstep, commits the
-// change as `chore: release vX.Y.Z`, and creates an annotated `vX.Y.Z` tag.
-// Pushing the tag is what triggers .github/workflows/release.yml (the signed
-// macOS + Windows build), so this script does NOT push unless `--push` is given.
+//   node scripts/release.mjs auto --ci
 //
-// The four version sites (see AGENTS.md / README.md):
+// to derive the bump from the conventional-commit messages since the last
+// release tag, write the new version to the four sites that MUST stay in
+// lockstep, commit `chore: release vX.Y.Z [skip ci]`, and tag `vX.Y.Z`. The
+// workflow then pushes and builds/signs/publishes in the same run. See
+// AGENTS.md / README.md for the full story.
+//
+// This is the single source of truth for the version bump. It also keeps a
+// MANUAL entrypoint (`npm run release <patch|minor|major|X.Y.Z>`) for local
+// experimentation, but the manual command is NOT the way releases are cut.
+//
+// The four version sites:
 //   1. package.json              -> "version"
 //   2. src-tauri/tauri.conf.json -> "version"
 //   3. src-tauri/Cargo.toml      -> [package] version
 //   4. src-tauri/Cargo.lock      -> the hackbox-to-keyboard package entry
 //
+// Conventional-commit bump rules (every merge still releases at least a patch):
+//   - breaking (`feat!:`/`fix!:`/... or a `BREAKING CHANGE:` footer) -> major
+//   - `feat:`                                                        -> minor
+//   - anything else (`fix:`, `chore:`, `docs:`, no prefix, ...)      -> patch
+//
 // Dependency-free: Node stdlib + git/cargo CLIs only.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,15 +48,19 @@ function usage(msg) {
   if (msg) console.error(`\nerror: ${msg}\n`);
   console.error(
     [
-      "Usage: npm run release <patch|minor|major|X.Y.Z> [-- --push]",
+      "Usage: node scripts/release.mjs <auto|patch|minor|major|X.Y.Z> [--ci]",
+      "       npm run release <patch|minor|major|X.Y.Z>   (manual; not the release path)",
       "",
+      "  auto                derive the bump from conventional commits since the last vX.Y.Z tag",
       "  patch|minor|major   bump the current version by that semver part",
       "  X.Y.Z               set an explicit version (must be > current)",
-      "  --push              also run `git push --follow-tags` (triggers the release build)",
+      "  --ci                CI mode: tag the commit `[skip ci]` (loop guard) and skip the",
+      "                      branch-name guard; the workflow does the push/build/publish",
       "",
-      "Bumps the version in package.json, src-tauri/tauri.conf.json,",
-      "src-tauri/Cargo.toml and src-tauri/Cargo.lock, commits, and tags vX.Y.Z.",
-      "Requires a clean working tree on the `" + DEFAULT_BRANCH + "` branch.",
+      "Writes the new version to package.json, src-tauri/tauri.conf.json,",
+      "src-tauri/Cargo.toml and src-tauri/Cargo.lock, cross-checks they agree,",
+      "commits `chore: release vX.Y.Z`, and creates the annotated `vX.Y.Z` tag.",
+      "Releases are normally cut automatically on merge to `" + DEFAULT_BRANCH + "` — see README.md.",
     ].join("\n"),
   );
   process.exit(msg ? 1 : 0);
@@ -56,6 +73,15 @@ function die(msg) {
 
 function git(args, opts = {}) {
   return execFileSync("git", args, { cwd: ROOT, encoding: "utf8", ...opts }).trim();
+}
+
+function gitMaybe(args) {
+  // Run a git command that is allowed to fail (returns null instead of throwing).
+  try {
+    return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim();
+  } catch {
+    return null;
+  }
 }
 
 function parseSemver(v) {
@@ -71,21 +97,65 @@ function cmpSemver(a, b) {
   return 0;
 }
 
-function computeNext(current, arg) {
+function bumpBy(current, level) {
   const [maj, min, pat] = current;
-  switch (arg) {
+  switch (level) {
     case "patch":
       return [maj, min, pat + 1];
     case "minor":
       return [maj, min + 1, 0];
     case "major":
       return [maj + 1, 0, 0];
-    default: {
-      const explicit = parseSemver(arg);
-      if (!explicit) usage(`invalid bump or version: "${arg}"`);
-      return explicit;
+    default:
+      return null;
+  }
+}
+
+function computeNext(current, arg) {
+  const byLevel = bumpBy(current, arg);
+  if (byLevel) return byLevel;
+  const explicit = parseSemver(arg);
+  if (!explicit) usage(`invalid bump or version: "${arg}"`);
+  return explicit;
+}
+
+// --- Conventional-commit bump derivation -------------------------------------
+
+function lastReleaseTag() {
+  // The most recent vX.Y.Z tag reachable from HEAD, or null if there are none.
+  return gitMaybe(["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"]);
+}
+
+function commitsSince(tag) {
+  // Full message body of each NON-MERGE commit introduced since `tag` (or all of
+  // history when `tag` is null). History is merge commits, not squash, so the
+  // real change commits are the non-merge ones — those carry the conventional
+  // prefixes. Records are separated by an ASCII record-separator (0x1e).
+  const range = tag ? `${tag}..HEAD` : "HEAD";
+  const out = execFileSync("git", ["log", range, "--no-merges", "--format=%B%x1e"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  return out
+    .split("\x1e")
+    .map((s) => s.replace(/^\n+/, "").trimEnd())
+    .filter(Boolean);
+}
+
+function deriveBumpLevel(commits) {
+  // Reconcile to the largest bump any commit implies; never a no-op (>= patch).
+  let level = "patch";
+  for (const body of commits) {
+    const subject = body.split("\n", 1)[0];
+    // `type!:` / `type(scope)!:` subject, or a `BREAKING CHANGE:` footer.
+    if (/^[a-zA-Z]+(\([^)]*\))?!:/.test(subject) || /^BREAKING[ -]CHANGE:/m.test(body)) {
+      return "major";
+    }
+    if (/^feat(\([^)]*\))?:/.test(subject)) {
+      level = "minor";
     }
   }
+  return level;
 }
 
 // --- File mutators that preserve formatting ----------------------------------
@@ -109,9 +179,12 @@ function bumpCargoToml(path, newVersion) {
   writeFileSync(path, text.replace(re, `$1${newVersion}$3`));
 }
 
-function haveCargo() {
+function tryCargoUpdate(extraArgs) {
   try {
-    execFileSync("cargo", ["--version"], { stdio: "ignore" });
+    execFileSync("cargo", ["update", "-p", CRATE, "--precise", ...extraArgs], {
+      cwd: SRC_TAURI,
+      stdio: "inherit",
+    });
     return true;
   } catch {
     return false;
@@ -120,24 +193,16 @@ function haveCargo() {
 
 function bumpCargoLock(newVersion) {
   // Preferred: let cargo rewrite the lockfile entry so it stays internally
-  // consistent. `--precise` on the local package only touches its own entry;
-  // `--offline` keeps it metadata-only (no network/registry refresh).
-  if (haveCargo()) {
-    try {
-      execFileSync("cargo", ["update", "-p", CRATE, "--precise", newVersion, "--offline"], {
-        cwd: SRC_TAURI,
-        stdio: "inherit",
-      });
-      return;
-    } catch {
-      console.error("warning: `cargo update` failed; falling back to a targeted Cargo.lock edit");
-    }
-  } else {
-    console.error("warning: cargo not found; falling back to a targeted Cargo.lock edit");
+  // consistent. `--precise` on the local package only touches its own entry.
+  // Try offline first (fast, works locally where the registry cache exists),
+  // then online (a fresh CI checkout has no cache), then fall back to a
+  // targeted text edit. Changing only the root package's own version line keeps
+  // the lockfile valid because nothing else references it by version.
+  if (tryCargoUpdate([newVersion, "--offline"]) || tryCargoUpdate([newVersion])) {
+    return;
   }
+  console.error("warning: `cargo update` unavailable/failed; editing the Cargo.lock entry directly");
 
-  // Fallback: edit ONLY the `name = "hackbox-to-keyboard"` package entry's
-  // version line, leaving every other lockfile entry untouched.
   const text = readFileSync(CARGO_LOCK, "utf8");
   const re = new RegExp(`(name = "${CRATE}"\\nversion = ")(\\d+\\.\\d+\\.\\d+)(")`);
   if (!re.test(text)) die(`could not find the ${CRATE} entry in ${CARGO_LOCK}`);
@@ -186,26 +251,42 @@ function verifyAllAgree(expected) {
 
 function main() {
   const argv = process.argv.slice(2);
+  const ci = argv.includes("--ci");
   const push = argv.includes("--push");
   const positional = argv.filter((a) => !a.startsWith("--"));
   if (positional.length !== 1) usage(positional.length === 0 ? null : "expected exactly one bump argument");
-  const bumpArg = positional[0];
 
   // Guard rail 1: clean working tree.
   if (git(["status", "--porcelain"])) {
     die("working tree is not clean; commit or stash changes before releasing");
   }
 
-  // Guard rail 2: on the default branch.
-  const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]);
-  if (branch !== DEFAULT_BRANCH) {
-    die(`releases must be cut from \`${DEFAULT_BRANCH}\` (currently on \`${branch}\`)`);
+  // Guard rail 2: on the default branch. CI controls the checked-out ref
+  // (release.yml checks out `main`), so the branch-name guard is skipped there.
+  if (!ci) {
+    const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]);
+    if (branch !== DEFAULT_BRANCH) {
+      die(`releases must be cut from \`${DEFAULT_BRANCH}\` (currently on \`${branch}\`)`);
+    }
   }
 
-  // Compute the new version and reject anything non-increasing.
   const currentStr = readPkgVersion();
   const current = parseSemver(currentStr);
   if (!current) die(`current package.json version is not semver: "${currentStr}"`);
+
+  // Resolve the bump argument. `auto` derives it from conventional commits.
+  let bumpArg = positional[0];
+  if (bumpArg === "auto") {
+    const lastTag = lastReleaseTag();
+    const commits = commitsSince(lastTag);
+    const level = deriveBumpLevel(commits);
+    console.log(
+      `auto: ${level} bump from ${commits.length} commit(s) since ${lastTag ?? "the start of history"}`,
+    );
+    bumpArg = level;
+  }
+
+  // Compute the new version and reject anything non-increasing.
   const next = computeNext(current, bumpArg);
   if (cmpSemver(next, current) <= 0) {
     die(`new version ${next.join(".")} is not greater than current ${currentStr}`);
@@ -225,18 +306,24 @@ function main() {
   verifyAllAgree(newVersion);
   console.log("All four version sites agree.");
 
-  // Commit + annotated tag.
+  // Commit + annotated tag. In CI the commit message carries `[skip ci]` so the
+  // push back to `main` does not re-trigger the release workflow (loop guard).
   git(["add", "package.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"]);
-  git(["commit", "-m", `chore: release ${tag}`]);
+  git(["commit", "-m", `chore: release ${tag}${ci ? " [skip ci]" : ""}`]);
   git(["tag", "-a", tag, "-m", `Release ${tag}`]);
   console.log(`Committed and tagged ${tag}.`);
 
+  // Expose the result to the workflow (release.yml reads these step outputs).
+  if (process.env.GITHUB_OUTPUT) {
+    appendFileSync(process.env.GITHUB_OUTPUT, `version=${newVersion}\ntag=${tag}\n`);
+  }
+
   if (push) {
     git(["push", "--follow-tags", "origin", DEFAULT_BRANCH], { stdio: "inherit" });
-    console.log(`Pushed ${DEFAULT_BRANCH} and ${tag} — the release build is now running.`);
-  } else {
-    console.log("\nNothing has been pushed. To trigger the signed release build, run:");
-    console.log(`\n    git push --follow-tags origin ${DEFAULT_BRANCH}\n`);
+    console.log(`Pushed ${DEFAULT_BRANCH} and ${tag}.`);
+  } else if (!ci) {
+    console.log("\nNothing has been pushed (manual run). Releases are cut automatically on merge to");
+    console.log(`\`${DEFAULT_BRANCH}\`; this manual entrypoint is for local experimentation only.\n`);
   }
 }
 
