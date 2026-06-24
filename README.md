@@ -193,7 +193,7 @@ App-Specific Passwords**.
 **4. Find your Team ID** at [developer.apple.com → Membership](https://developer.apple.com/account)
 (also the value in parentheses in the signing identity name).
 
-**5. Set the secrets** (these must exist *before* you push a release tag):
+**5. Set the secrets** (these must exist *before* the first merge that cuts a release):
 
 | Secret | Value |
 | --- | --- |
