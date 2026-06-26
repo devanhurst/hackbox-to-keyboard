@@ -246,10 +246,11 @@ unsigned `.exe`; an OV/EV code-signing cert removes that.
 ### Releasing (automatic on merge to `main`)
 
 **You never cut a release by hand — there is no command to run and no tag to
-push.** Every merge to `main` ships a release. `.github/workflows/release.yml`
-does the whole thing in one run: it derives the version bump, updates the four
-version sites, commits and tags `vX.Y.Z`, then builds, signs/notarizes, and
-publishes the macOS (universal) + Windows installers as a GitHub release.
+push.** A merge to `main` ships a release **when it brings user-facing changes**.
+`.github/workflows/release.yml` does the whole thing in one run: it derives the
+version bump, updates the four version sites, commits and tags `vX.Y.Z`, then
+builds, signs/notarizes, and publishes the macOS (universal) + Windows installers
+as a GitHub release.
 
 **Your commit messages control the bump.** The workflow scans the
 [conventional-commit](https://www.conventionalcommits.org) prefixes of the
@@ -259,10 +260,14 @@ commits merged since the last release tag:
 | --- | --- |
 | a breaking change — `feat!:` / `fix!:` / a `BREAKING CHANGE:` footer | **major** |
 | a `feat:` | **minor** |
-| anything else (`fix:`, `chore:`, `docs:`, no prefix, …) | **patch** |
+| a `fix:` or `perf:` | **patch** |
+| only `chore:` / `docs:` / `ci:` / `refactor:` / … (or no prefix) | **no release** |
 
-Every merge releases *something*: with no `feat:`/breaking commit you still get a
-patch. So just merge to `main`; pick your prefixes to get the bump you want.
+Only user-facing types release. A docs/ci/chore-only merge cuts **no release** —
+no version bump, no build, and crucially no no-op update pushed to clients. Need
+to validate a non-releasing branch? Run the **Validation Build** workflow against
+it (Actions → Validation Build) for signed installers without shipping. Pick your
+prefixes to get the bump you want.
 
 `scripts/release.mjs` is the single source of truth for the bump. CI invokes it
 as `node scripts/release.mjs auto --ci`; it computes the new version, writes it
