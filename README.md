@@ -193,7 +193,7 @@ App-Specific Passwords**.
 **4. Find your Team ID** at [developer.apple.com → Membership](https://developer.apple.com/account)
 (also the value in parentheses in the signing identity name).
 
-**5. Set the secrets** (these must exist *before* you push a release tag):
+**5. Set the secrets** (these must exist *before* the first merge that cuts a release):
 
 | Secret | Value |
 | --- | --- |
@@ -216,10 +216,11 @@ gh secret set APPLE_TEAM_ID -b "TEAMID1234"
 rm cert.p12
 ```
 
-> The `APPLE_*` env lines are wired up in `.github/workflows/release.yml`. Don't
-> push a tag until every secret above is set: `tauri-action` runs `security
-> import` whenever `APPLE_CERTIFICATE` is defined, and an empty/unset value
-> fails the whole build.
+> The `APPLE_*` env lines are wired up in `.github/workflows/release.yml`. Set
+> every secret above **before the first merge that cuts a release** (see
+> [Releasing](#releasing-automatic-on-merge-to-main)): `tauri-action` runs
+> `security import` whenever `APPLE_CERTIFICATE` is defined, and an empty/unset
+> value fails the whole build.
 
 ### Windows
 
@@ -234,18 +235,46 @@ npm run tauri build      # produces .msi (WiX) and .exe (NSIS) in bundle/
 Windows needs no special permission for key injection. SmartScreen warns on an
 unsigned `.exe`; an OV/EV code-signing cert removes that.
 
-### CI (both platforms)
+### Releasing (automatic on merge to `main`)
 
-`.github/workflows/release.yml` builds macOS (universal) + Windows installers
-and attaches them to a **draft** GitHub release whenever you push a version tag:
+**You never cut a release by hand — there is no command to run and no tag to
+push.** Every merge to `main` ships a release. `.github/workflows/release.yml`
+does the whole thing in one run: it derives the version bump, updates the four
+version sites, commits and tags `vX.Y.Z`, then builds, signs/notarizes, and
+publishes the macOS (universal) + Windows installers as a GitHub release.
 
-```bash
-npm version patch        # bumps package.json, creates a commit + tag
-git push --follow-tags
-```
+**Your commit messages control the bump.** The workflow scans the
+[conventional-commit](https://www.conventionalcommits.org) prefixes of the
+commits merged since the last release tag:
 
-Keep `src-tauri/tauri.conf.json`'s `version` in sync with `package.json`. To
-regenerate the platform icon set from a source image:
+| Commit(s) since last release | Release bump |
+| --- | --- |
+| a breaking change — `feat!:` / `fix!:` / a `BREAKING CHANGE:` footer | **major** |
+| a `feat:` | **minor** |
+| anything else (`fix:`, `chore:`, `docs:`, no prefix, …) | **patch** |
+
+Every merge releases *something*: with no `feat:`/breaking commit you still get a
+patch. So just merge to `main`; pick your prefixes to get the bump you want.
+
+`scripts/release.mjs` is the single source of truth for the bump. CI invokes it
+as `node scripts/release.mjs auto --ci`; it computes the new version, writes it
+to **all four** lockstep sites — `package.json`, `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml`, and the `hackbox-to-keyboard` entry in
+`src-tauri/Cargo.lock` — cross-checks they agree, and commits
+`chore: release vX.Y.Z [skip ci]`. The `[skip ci]` marker is the **loop guard**:
+it stops the bump commit (pushed back to `main`) from triggering another release.
+
+> The script keeps a manual entrypoint (`npm run release <patch|minor|major|X.Y.Z>`)
+> for local experimentation, but it is **not** how releases are cut — merging to
+> `main` is. A bump commit pushed by hand is ignored by the workflow (its message
+> starts with `chore: release v`), so it will not build.
+
+> **Setup note:** the bump commit is pushed to `main` by `github-actions[bot]`
+> using the built-in `GITHUB_TOKEN`. If `main` has branch protection that blocks
+> direct pushes, allow this bot to bypass it (or the push step fails). No extra
+> PAT secret is required for the token-free flow used here.
+
+To regenerate the platform icon set from a source image:
 
 ```bash
 npm run tauri icon path/to/source.png
@@ -287,10 +316,12 @@ push a malicious build.
    printf '%s' 'YOUR_KEY_PASSWORD' | gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
    ```
 
-After that, every tagged release produces signed update artifacts plus a
-`latest.json` manifest. The endpoint resolves to the latest **published**,
-non-prerelease release — so an update only goes out once you publish the draft
-release the workflow creates (not the moment the tag builds).
+After that, every release produces signed update artifacts plus a `latest.json`
+manifest. The endpoint resolves to the latest **published**, non-prerelease
+release. Because releases now **publish automatically** on merge to `main`
+(`releaseDraft: false` in `release.yml`), an in-app update goes out to all users
+as soon as a merge's build finishes — there is no manual "publish the draft"
+gate. Keep that in mind: merging to `main` ships to every installed client.
 
 > The pubkey in config and the private key in CI must be from the same keypair.
 > If you ever rotate the key, shipped clients trust only the **old** key, so push

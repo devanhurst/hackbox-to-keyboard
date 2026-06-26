@@ -1,18 +1,85 @@
 name: Release
 
-# Build macOS + Windows installers when a version tag is pushed (e.g. v0.1.0),
-# and attach them to a GitHub release.
+# Every merge to `main` cuts a release. This single workflow run:
+#   1. derives the semver bump from the conventional commits since the last tag,
+#   2. writes the new version to the four lockstep sites + commits & tags it,
+#   3. pushes the bump commit and tag back to `main`, then
+#   4. builds, signs/notarizes, and publishes the macOS universal + Windows
+#      installers as a GitHub release.
+#
+# No human runs a command or creates a tag by hand.
+#
+# Loop guard (the critical correctness property): the bump commit is authored
+# `chore: release vX.Y.Z [skip ci]`. `[skip ci]` makes GitHub skip the workflow
+# run that the push-back to `main` would otherwise trigger, so the release does
+# not loop. The job-level `if:` below is a belt-and-suspenders second layer: it
+# also refuses to run on any commit whose message starts with `chore: release v`
+# (e.g. a `[skip ci]` that an org setting failed to honor, or a manual bump).
+#
+# Why one workflow instead of a tag trigger: a tag pushed with the default
+# GITHUB_TOKEN does NOT start a separate `on: push: tags` workflow, so a
+# tag-triggered build would be silently skipped. We therefore consolidate the
+# bump, tag, build, and publish into this one push-to-main run.
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# Serialize releases so two quick merges can't race on the version bump / push.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    # Skip our own release bump commits (loop guard fallback). Always run on a
+    # manual dispatch, where there is no head_commit context.
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (!contains(github.event.head_commit.message, '[skip ci]') &&
+           !startsWith(github.event.head_commit.message, 'chore: release v')) }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          # Full history + tags so the bump can be derived from the commits
+          # since the last release tag.
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Rust
+        # Lets release.mjs keep Cargo.lock valid via `cargo update --precise`.
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version, update four sites, commit & tag
+        id: bump
+        run: node scripts/release.mjs auto --ci
+
+      - name: Push commit and tag
+        # The bump commit carries `[skip ci]`, so this push does not re-trigger
+        # the workflow. The tag does not match the `branches: [main]` trigger.
+        # `HEAD:main` works whether checkout left us on a branch or detached;
+        # `--follow-tags` also pushes the annotated vX.Y.Z tag.
+        run: git push --follow-tags origin HEAD:main
+
   build:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -29,6 +96,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Build exactly the tagged bump commit the release attaches to.
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -68,7 +138,7 @@ jobs:
           # developer" warning and gives a stable signature so the macOS
           # Accessibility key-injection grant survives updates.
           #
-          # All of these must be set as repo secrets BEFORE pushing a tag: once
+          # All of these must be set as repo secrets BEFORE the first release: once
           # APPLE_CERTIFICATE is defined, tauri-action runs `security import` on
           # the macOS runner, and an empty/unset value fails the whole build
           # ("security import ... parameters not valid"). See the README for how
@@ -82,8 +152,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           args: ${{ matrix.args }}
-          tagName: ${{ github.ref_name }}
-          releaseName: "Hackbox → Keyboard ${{ github.ref_name }}"
+          tagName: ${{ needs.prepare.outputs.tag }}
+          releaseName: "Hackbox → Keyboard ${{ needs.prepare.outputs.tag }}"
           releaseBody: "See the assets below to download and install."
-          releaseDraft: true
+          # Publish automatically (no manual draft step) — every merge ships.
+          releaseDraft: false
           prerelease: false
