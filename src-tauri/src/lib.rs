@@ -61,6 +61,29 @@ fn macos_virtual_keycode(code: &str) -> Option<u32> {
         "BracketRight" => 0x1E, "Backslash" => 0x2A, "Semicolon" => 0x29,
         "Quote" => 0x27, "Comma" => 0x2B, "Period" => 0x2F, "Slash" => 0x2C,
         "Backquote" => 0x32,
+        // Modifier keys as standalone press targets — true left/right via the
+        // raw virtual keycodes (Apple Events.h), since enigo's generic
+        // Key::Shift/Control/Alt/Meta collapse both sides into one.
+        "MetaLeft" => 0x37, "MetaRight" => 0x36,
+        "ShiftLeft" => 0x38, "ShiftRight" => 0x3C,
+        "AltLeft" => 0x3A, "AltRight" => 0x3D,
+        "ControlLeft" => 0x3B, "ControlRight" => 0x3E,
+        _ => return None,
+    })
+}
+
+// Windows side-specific virtual-key codes for standalone modifier presses, so
+// Left/Right map to distinct physical keys instead of enigo's generic modifier.
+// Verify on a real Windows build: if Key::Other does not distinguish sides, the
+// generic Key::Shift/Control/Alt/Meta arms in code_to_key remain a working
+// fallback.
+#[cfg(target_os = "windows")]
+fn windows_virtual_keycode(code: &str) -> Option<u32> {
+    Some(match code {
+        "ShiftLeft" => 0xA0, "ShiftRight" => 0xA1,
+        "ControlLeft" => 0xA2, "ControlRight" => 0xA3,
+        "AltLeft" => 0xA4, "AltRight" => 0xA5,
+        "MetaLeft" => 0x5B, "MetaRight" => 0x5C,
         _ => return None,
     })
 }
@@ -68,6 +91,11 @@ fn macos_virtual_keycode(code: &str) -> Option<u32> {
 fn code_to_key(code: &str) -> Option<Key> {
     #[cfg(target_os = "macos")]
     if let Some(vk) = macos_virtual_keycode(code) {
+        return Some(Key::Other(vk));
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Some(vk) = windows_virtual_keycode(code) {
         return Some(Key::Other(vk));
     }
 

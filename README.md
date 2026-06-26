@@ -125,7 +125,9 @@ can give different players different layouts.
 
 **Set keys.** Click a key field and press the key — or modifier combo (e.g.
 Shift+J, Ctrl+Cmd+Space). Hold the modifiers and press the main key; Esc cancels
-capture. The Default key fields live in the layout editor; under each assigned
+capture. To bind a **modifier on its own** (e.g. Left Shift, Right Ctrl, Left
+Cmd), tap that modifier by itself — left and right are kept distinct. The Default
+key fields live in the layout editor; under each assigned
 player every button shows its effective key — click one to set a **per-player
 override** (shown highlighted) and use **↺** to revert it to the layout default.
 

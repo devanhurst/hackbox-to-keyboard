@@ -24,6 +24,30 @@ Resolving at press time also closes the editor/override edit paths that never
 re-push. Keep `src/resolvePress.ts` pure (no DOM/Tauri/storage) so
 `test/resolvePress.test.ts` (`npm test`, Node's built-in runner) can guard it.
 
+## Modifier keys as bindings
+
+A button can be bound to a **standalone modifier** (Left Shift, Right Ctrl, Left
+Cmd, …). The binding is just `{ modifiers: [], code: "ShiftLeft" }` — the W3C
+`KeyboardEvent.code` of the modifier *is* the binding code; no data-model change.
+The eight codes and the pure helpers live in `src/modifierKeys.ts` (kept
+runtime-import-free, like `resolvePress.ts`, so `test/modifierKeys.test.ts` can
+guard it).
+
+**Capture is tap-vs-hold** (`main.ts` keydown/keyup): tap a modifier *by itself*
+to bind it (resolved on keyup); *hold* a modifier and press a key to make a combo
+(the pre-existing path). The pending modifier is keyed by the capturing target's
+object identity so switching fields mid-press can't bind into the new one. This
+applies only to host-output captures (`default` / `player`); the `playerKey`
+capture still ignores modifiers (the device sends regular keys).
+
+**Left/right is platform-split.** macOS delivers true L/R reliably via raw
+virtual keycodes in `macos_virtual_keycode` (`src-tauri/src/lib.rs`), matching the
+existing `Key::Other(vk)` pattern. Windows *attempts* L/R via side-specific VK
+codes in `windows_virtual_keycode`, but enigo's `Key::Other` side-distinction is
+**unverified on a real Windows build** — the generic `Key::Shift`/`Control`/`Alt`/
+`Meta` arms in `code_to_key` remain a working fallback so a Windows build never
+regresses.
+
 ## Releasing
 
 **Releases are fully automatic on merge to `main` — never cut one by hand, run a

@@ -30,6 +30,7 @@ import {
   effectiveBinding as resolveEffectiveBinding,
   resolvePress,
 } from "./resolvePress";
+import { isModifierCode, standaloneModifierBinding } from "./modifierKeys";
 
 const LS = {
   hostId: "h2k.hostId",
@@ -250,7 +251,23 @@ function openEditor(id: string) {
   showView("editor");
 }
 
+const isMac = navigator.userAgent.includes("Mac");
+
+// Standalone modifier bindings render with their side (L/R). Meta reads as Cmd
+// on macOS and Win elsewhere to match the physical key.
+const MODIFIER_CODE_LABEL: Record<string, string> = {
+  ShiftLeft: "L Shift",
+  ShiftRight: "R Shift",
+  ControlLeft: "L Ctrl",
+  ControlRight: "R Ctrl",
+  AltLeft: "L Alt",
+  AltRight: "R Alt",
+  MetaLeft: isMac ? "L Cmd" : "L Win",
+  MetaRight: isMac ? "R Cmd" : "R Win",
+};
+
 function keyLabel(code: string): string {
+  if (MODIFIER_CODE_LABEL[code]) return MODIFIER_CODE_LABEL[code];
   if (code.startsWith("Key")) return code.slice(3);
   if (code.startsWith("Digit")) return code.slice(5);
   const map: Record<string, string> = {
@@ -806,28 +823,42 @@ async function deleteLayout(id: string) {
   for (const userId of affected) pushToPlayer(userId);
 }
 
-const MODIFIER_CODES = new Set([
-  "ShiftLeft",
-  "ShiftRight",
-  "ControlLeft",
-  "ControlRight",
-  "AltLeft",
-  "AltRight",
-  "MetaLeft",
-  "MetaRight",
-]);
+// Commit a resolved key to whichever host-output target is capturing — the
+// layout default or a per-player override. (The playerKey capture is the
+// device-side key and is handled separately.)
+function commitHostBinding(target: CaptureTarget, binding: Binding) {
+  if (target.kind === "default") {
+    const button = editingLayout()?.buttons.find((b) => b.id === target.buttonId);
+    if (button) {
+      button.binding = binding;
+      persistLayouts();
+    }
+  } else if (target.kind === "player") {
+    ensurePlayer(target.userId).overrides[target.buttonId] = binding;
+    savePlayers(players);
+  }
+}
+
+// A modifier pressed during a host-output capture is provisional: tapping it by
+// itself binds the standalone modifier (resolved on keyup), but holding it as a
+// prefix and then pressing a key makes a combo instead. Keyed by the capturing
+// target's identity so switching fields mid-press can't bind into the new one.
+let pendingModifier: { code: string; target: CaptureTarget } | null = null;
 
 window.addEventListener("keydown", (e) => {
   if (!capture) return;
   e.preventDefault();
   if (e.code === "Escape") {
     capture = null;
+    pendingModifier = null;
     rerenderCaptureView();
     return;
   }
-  if (MODIFIER_CODES.has(e.code)) return;
 
   if (capture.kind === "playerKey") {
+    // The key a player presses on their OWN device — OS modifiers are
+    // meaningless here, so ignore modifier-only presses.
+    if (isModifierCode(e.code)) return;
     const layout = editingLayout();
     const button = layout?.buttons.find((b) => b.id === capture!.buttonId);
     if (layout && button) {
@@ -840,27 +871,35 @@ window.addEventListener("keydown", (e) => {
     return;
   }
 
+  // Host-output capture (default / per-player override). A bare modifier is held
+  // pending a keyup (standalone tap); any non-modifier key resolves it as a
+  // prefix for a combo.
+  if (isModifierCode(e.code)) {
+    pendingModifier = { code: e.code, target: capture };
+    return;
+  }
+  pendingModifier = null;
+
   const modifiers: Modifier[] = [];
   if (e.ctrlKey) modifiers.push("Control");
   if (e.altKey) modifiers.push("Alt");
   if (e.shiftKey) modifiers.push("Shift");
   if (e.metaKey) modifiers.push("Meta");
   const ordered = MODIFIER_ORDER.filter((m) => modifiers.includes(m));
-  const binding: Binding = { modifiers: ordered, code: e.code };
+  commitHostBinding(capture, { modifiers: ordered, code: e.code });
 
-  if (capture.kind === "default") {
-    const button = editingLayout()?.buttons.find(
-      (b) => b.id === capture!.buttonId,
-    );
-    if (button) {
-      button.binding = binding;
-      persistLayouts();
-    }
-  } else {
-    ensurePlayer(capture.userId).overrides[capture.buttonId] = binding;
-    savePlayers(players);
-  }
+  capture = null;
+  rerenderCaptureView();
+});
 
+// Releasing a modifier that was tapped by itself during a host-output capture —
+// nothing else was pressed while it was down — binds that standalone modifier.
+window.addEventListener("keyup", (e) => {
+  if (!capture || !pendingModifier) return;
+  if (pendingModifier.code !== e.code || pendingModifier.target !== capture) return;
+  e.preventDefault();
+  commitHostBinding(capture, standaloneModifierBinding(e.code));
+  pendingModifier = null;
   capture = null;
   rerenderCaptureView();
 });
