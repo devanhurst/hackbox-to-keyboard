@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Hackbox host client that casts player button presses to OS-level keypresses",
   "engines": {
-    "node": ">=22.6"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "dev": "vite",
