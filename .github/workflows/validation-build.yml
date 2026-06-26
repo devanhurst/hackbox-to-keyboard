@@ -1,0 +1,94 @@
+name: Validation Build
+
+# On-demand, signed installers for validating a branch (typically an open PR)
+# BEFORE it merges. Unlike release.yml this NEVER bumps the version, tags,
+# creates a GitHub Release, or touches the updater feed — it only builds the
+# macOS universal + Windows installers and uploads them as run artifacts you can
+# download and test.
+#
+# Run it from the Actions tab → "Validation Build" → Run workflow, and pick the
+# PR's branch in the ref dropdown. The build is byte-for-byte the same toolchain
+# as a release (same signing/notarization secrets) so the macOS Accessibility
+# key-injection grant and the installer behave exactly like the shipped app.
+on:
+  workflow_dispatch:
+
+# Only read the repo — this workflow publishes nothing.
+permissions:
+  contents: read
+
+# One validation build per ref at a time; a newer dispatch supersedes an
+# in-flight one for the same branch.
+concurrency:
+  group: validation-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon + Intel universal binary
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+            artifactName: macos-universal
+            artifactGlob: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          - platform: windows-latest
+            args: ""
+            artifactName: windows-x64
+            artifactGlob: src-tauri/target/release/bundle/nsis/*.exe
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+        # Checks out the branch selected in the Run workflow dropdown.
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS universal build needs both arch targets; harmless on Windows.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build (signed + notarized, no release)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Same signing/notarization/updater secrets as release.yml, so the
+          # validation installer is indistinguishable from a shipped one. See
+          # release.yml for what each secret does. Note: createUpdaterArtifacts
+          # is on in tauri.conf.json, so the signing key must be present for the
+          # build to succeed — but with no tagName below, nothing is published.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          # No tagName → tauri-action builds only; it does NOT create a release.
+          args: ${{ matrix.args }}
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifactName }}
+          path: ${{ matrix.artifactGlob }}
+          if-no-files-found: error
