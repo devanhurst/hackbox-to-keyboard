@@ -28,17 +28,23 @@ re-push. Keep `src/resolvePress.ts` pure (no DOM/Tauri/storage) so
 
 **Releases are fully automatic on merge to `main` — never cut one by hand, run a
 release command, or push a tag.** Every merge to `main` runs
-`.github/workflows/release.yml`, which in a single run derives the bump, updates
-the four version sites, commits + tags `vX.Y.Z`, pushes back, and then builds,
-signs/notarizes, and publishes the macOS universal + Windows installers.
+`.github/workflows/release.yml`. When the merge brings user-facing commits it
+derives the bump, updates the four version sites, commits + tags `vX.Y.Z`, pushes
+back, and then builds, signs/notarizes, and publishes the macOS universal +
+Windows installers. When it doesn't, the run is a **no-op** — no bump, no tag, no
+build (see below).
 
 **Bump size comes from conventional commits** since the last `vX.Y.Z` tag
-(scanning non-merge commits — history is merge commits, not squash):
+(scanning non-merge commits — history is merge commits, not squash). **Only
+user-facing types release** — a merge with none of them ships nothing, so a
+docs/ci/chore-only change never pushes a no-op update to clients:
 
 - breaking (`feat!:` / `fix!:` / a `BREAKING CHANGE:` footer) → **major**
 - `feat:` → **minor**
-- anything else (`fix:`, `chore:`, `docs:`, no prefix, …) → **patch**
-- never a no-op: every merge releases at least a patch.
+- `fix:` / `perf:` → **patch**
+- anything else (`chore:`, `docs:`, `ci:`, `refactor:`, `style:`, `test:`, no
+  prefix, …) → **no release** (`release.mjs` emits `released=false`; the push
+  step is skipped and the `build` job is gated off)
 
 `scripts/release.mjs` (dependency-free Node ESM) is the single source of truth
 for the bump. CI calls `node scripts/release.mjs auto --ci`; locally it also

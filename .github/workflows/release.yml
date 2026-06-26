@@ -1,11 +1,15 @@
 name: Release
 
-# Every merge to `main` cuts a release. This single workflow run:
+# A merge to `main` cuts a release ONLY when it brings user-facing commits
+# (feat/fix/perf/breaking) since the last tag; a docs/ci/chore-only merge builds
+# nothing and ships nothing. When a release IS warranted, this single run:
 #   1. derives the semver bump from the conventional commits since the last tag,
 #   2. writes the new version to the four lockstep sites + commits & tags it,
 #   3. pushes the bump commit and tag back to `main`, then
 #   4. builds, signs/notarizes, and publishes the macOS universal + Windows
 #      installers as a GitHub release.
+# When no release is warranted, `release.mjs` emits `released=false`, the push
+# step is skipped, and the `build` job is gated off — the run is a no-op.
 #
 # No human runs a command or creates a tag by hand.
 #
@@ -43,6 +47,7 @@ jobs:
            !startsWith(github.event.head_commit.message, 'chore: release v')) }}
     runs-on: ubuntu-latest
     outputs:
+      released: ${{ steps.bump.outputs.released }}
       tag: ${{ steps.bump.outputs.tag }}
       version: ${{ steps.bump.outputs.version }}
     steps:
@@ -72,14 +77,20 @@ jobs:
         run: node scripts/release.mjs auto --ci
 
       - name: Push commit and tag
+        # Only when a release was actually cut — a merge with no feat/fix/perf/
+        # breaking commits since the last tag produces no bump commit or tag.
         # The bump commit carries `[skip ci]`, so this push does not re-trigger
         # the workflow. The tag does not match the `branches: [main]` trigger.
         # `HEAD:main` works whether checkout left us on a branch or detached;
         # `--follow-tags` also pushes the annotated vX.Y.Z tag.
+        if: steps.bump.outputs.released == 'true'
         run: git push --follow-tags origin HEAD:main
 
   build:
     needs: prepare
+    # Skip the (slow, signed, publishing) build entirely when no release was
+    # cut — nothing to build, sign, notarize or ship.
+    if: ${{ needs.prepare.outputs.released == 'true' }}
     strategy:
       fail-fast: false
       matrix:

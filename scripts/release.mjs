@@ -22,10 +22,13 @@
 //   3. src-tauri/Cargo.toml      -> [package] version
 //   4. src-tauri/Cargo.lock      -> the hackbox-to-keyboard package entry
 //
-// Conventional-commit bump rules (every merge still releases at least a patch):
+// Conventional-commit bump rules (only user-facing types release; a merge with
+// none of them cuts NO release, so chore/docs/ci tweaks don't ship a no-op
+// update to clients):
 //   - breaking (`feat!:`/`fix!:`/... or a `BREAKING CHANGE:` footer) -> major
 //   - `feat:`                                                        -> minor
-//   - anything else (`fix:`, `chore:`, `docs:`, no prefix, ...)      -> patch
+//   - `fix:` / `perf:`                                               -> patch
+//   - anything else (`chore:`, `docs:`, `ci:`, `refactor:`, ...)     -> no release
 //
 // Dependency-free: Node stdlib + git/cargo CLIs only.
 
@@ -142,17 +145,27 @@ function commitsSince(tag) {
     .filter(Boolean);
 }
 
-function deriveBumpLevel(commits) {
-  // Reconcile to the largest bump any commit implies; never a no-op (>= patch).
-  let level = "patch";
+const BUMP_RANK = { patch: 1, minor: 2, major: 3 };
+
+export function deriveBumpLevel(commits) {
+  // The largest bump the commits since the last tag imply, or `null` when none
+  // is releasable. Only feat / fix / perf / breaking ship a release; chore,
+  // docs, ci, style, test, refactor and non-conventional commits do not — a
+  // no-op merge must not push a version (and thus a no-op update) to clients.
+  let level = null;
   for (const body of commits) {
     const subject = body.split("\n", 1)[0];
+    let implied = null;
     // `type!:` / `type(scope)!:` subject, or a `BREAKING CHANGE:` footer.
     if (/^[a-zA-Z]+(\([^)]*\))?!:/.test(subject) || /^BREAKING[ -]CHANGE:/m.test(body)) {
       return "major";
+    } else if (/^feat(\([^)]*\))?:/.test(subject)) {
+      implied = "minor";
+    } else if (/^(fix|perf)(\([^)]*\))?:/.test(subject)) {
+      implied = "patch";
     }
-    if (/^feat(\([^)]*\))?:/.test(subject)) {
-      level = "minor";
+    if (implied && (level === null || BUMP_RANK[implied] > BUMP_RANK[level])) {
+      level = implied;
     }
   }
   return level;
@@ -280,9 +293,20 @@ function main() {
     const lastTag = lastReleaseTag();
     const commits = commitsSince(lastTag);
     const level = deriveBumpLevel(commits);
-    console.log(
-      `auto: ${level} bump from ${commits.length} commit(s) since ${lastTag ?? "the start of history"}`,
-    );
+    const since = lastTag ?? "the start of history";
+    if (level === null) {
+      // No feat/fix/perf/breaking since the last tag — nothing user-facing to
+      // ship. Cut no release: don't bump, commit, tag or push. The workflow
+      // reads `released=false` and skips the build/publish job.
+      console.log(
+        `auto: no releasable commits (feat/fix/perf/breaking) among ${commits.length} since ${since}; skipping release.`,
+      );
+      if (process.env.GITHUB_OUTPUT) {
+        appendFileSync(process.env.GITHUB_OUTPUT, `released=false\n`);
+      }
+      return;
+    }
+    console.log(`auto: ${level} bump from ${commits.length} commit(s) since ${since}`);
     bumpArg = level;
   }
 
@@ -315,7 +339,7 @@ function main() {
 
   // Expose the result to the workflow (release.yml reads these step outputs).
   if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(process.env.GITHUB_OUTPUT, `version=${newVersion}\ntag=${tag}\n`);
+    appendFileSync(process.env.GITHUB_OUTPUT, `released=true\nversion=${newVersion}\ntag=${tag}\n`);
   }
 
   if (push) {
@@ -327,4 +351,8 @@ function main() {
   }
 }
 
-main();
+// Run only when invoked as a script, not when imported (e.g. by the unit test
+// that exercises deriveBumpLevel) — importing must have no side effects.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}
