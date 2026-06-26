@@ -1290,7 +1290,7 @@ dependencies = [
 
 [[package]]
 name = "hackbox-to-keyboard"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "enigo",
  "serde",
