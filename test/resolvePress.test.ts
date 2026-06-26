@@ -71,6 +71,14 @@ test("two players on the same layout resolve independently by their own config",
   assert.deepEqual(resolvePress(players, layouts, P2, WIRE).binding, KeyZ);
 });
 
+test("resolves a standalone modifier binding for the matching button", () => {
+  const lShift: Binding = { code: "ShiftLeft", modifiers: [] };
+  const players: Players = { [PLAYER]: { layoutId: "L1", overrides: {}, enabled: true } };
+  const { binding, button } = resolvePress(players, [layout(lShift)], PLAYER, WIRE);
+  assert.deepEqual(binding, lShift);
+  assert.equal(button?.id, "btn-A");
+});
+
 test("no binding / no layout / unknown button resolve to no press", () => {
   const players: Players = {
     a: { layoutId: "L1", overrides: {}, enabled: true },
