@@ -4,6 +4,26 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - Add durable project-specific notes here as they are discovered through real work.
 
+## Press path (key-routing invariant)
+
+**The host must resolve which key to press from its CURRENT config at press time,
+keyed by the stable button id — never press a key value baked into the player's
+device.** Each pushed `Button`'s `event` is its button id (the field hackbox
+echoes back on a tap); on `msg`, `resolvePress(players, layouts, from, wire)`
+(`src/resolvePress.ts`) looks the button up by that id and resolves the
+per-player override or the button default *now*. `value` carries the resolved key
+as a human-readable string for logging only — do not press from it.
+
+Why this matters: if you instead bake the resolved key onto the wire and press it
+blindly (as commit `fd14eac` did, shipped 3.2.4–3.3.0), then any binding the host
+edits after a push — a button's default, a per-player override, or its reset —
+stays stale on the device until the next re-push, so taps fire the *old* key.
+That was the intermittent key-mismapping bug: players who reconnect re-push and
+heal; those who stay connected stay wrong; a restart (new room) fixes everyone.
+Resolving at press time also closes the editor/override edit paths that never
+re-push. Keep `src/resolvePress.ts` pure (no DOM/Tauri/storage) so
+`test/resolvePress.test.ts` (`npm test`, Node's built-in runner) can guard it.
+
 ## Releasing
 
 **Releases are fully automatic on merge to `main` — never cut one by hand, run a

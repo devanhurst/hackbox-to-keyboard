@@ -40,7 +40,10 @@ lives in a WebView, and key injection is done in Rust via
    The app resolves the binding for that player+button (the per-player override
    if set, otherwise the button's default) and — if forwarding is allowed (see
    below) — calls the `press_key` Rust command, which uses `enigo` to tap the key
-   system-wide. It then re-pushes the layout to re-arm the buttons.
+   system-wide. The binding is resolved from current config on every tap, so
+   editing a button's default or a per-player override takes effect immediately;
+   buttons are pushed `persistent`, so they stay armed for repeated taps without
+   a re-push.
 
 Keypress forwarding is gated by two switches. A **master switch** in the app bar
 arms or pauses *all* forwarding; it starts **live** on launch and every new room,

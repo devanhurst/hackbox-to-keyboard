@@ -49,12 +49,15 @@ export function layoutState(
   const size = fontSize(count);
 
   const components = layout.buttons.map((b) => {
-    const wire = encodeBinding(resolve(b));
     return {
       type: "Button",
       props: {
-        event: wire,
-        value: wire,
+        // `event` is the button's stable id — the field hackbox echoes back on a
+        // tap. The host resolves the key from its current config at press time
+        // (see resolvePress), so it must NOT carry the resolved key. `value` is
+        // the resolved key as a human-readable wire string, kept for logging only.
+        event: b.id,
+        value: encodeBinding(resolve(b)),
         label: b.label,
         persistent: true,
         keys: b.playerKey ? [b.playerKey] : ([] as string[]),
