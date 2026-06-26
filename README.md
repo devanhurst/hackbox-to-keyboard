@@ -94,6 +94,11 @@ On launch the app creates a room against `https://hackbox.ca` automatically and
 shows the room code — no configuration. Share that code; players join with the
 normal Hackbox client.
 
+Run the unit tests with `npm test` — Node's built-in runner over `test/*.test.ts`,
+which guards the press path ([`src/resolvePress.ts`](src/resolvePress.ts)). They
+strip TypeScript natively, so they need **Node ≥ 22.6** (the `engines` floor in
+`package.json`).
+
 The UI has two screens: the **Players** home (room code + the roster) and a
 **Layouts** manager reached via **Manage layouts →**.
 
