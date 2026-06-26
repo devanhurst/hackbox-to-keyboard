@@ -7,9 +7,7 @@ import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { emptyState, layoutState } from "./memberState";
 import { createHackboxSocket, type HackboxSocket } from "./hackboxSocket";
 import {
-  decodeBinding,
   duplicateLayout,
-  encodeBinding,
   exportLayout,
   getEditingLayoutId,
   importLayout,
@@ -28,6 +26,10 @@ import {
   type PlayerConfig,
   type Players,
 } from "./layouts";
+import {
+  effectiveBinding as resolveEffectiveBinding,
+  resolvePress,
+} from "./resolvePress";
 
 const LS = {
   hostId: "h2k.hostId",
@@ -131,7 +133,7 @@ function persistLayouts() {
 }
 
 function effectiveBinding(userId: string, button: ButtonDef): Binding | null {
-  return players[userId]?.overrides[button.id] ?? button.binding;
+  return resolveEffectiveBinding(players, userId, button);
 }
 
 // A press only reaches the keyboard when the master switch is on AND this
@@ -1007,15 +1009,14 @@ async function connect() {
     const p = payload as { from?: string; event?: string; value?: string };
     const from = p?.from;
     if (!from) return;
-    const wire = p.value || p.event;
-    const binding = decodeBinding(wire);
+    // `event` is the button's stable id (the field hackbox echoes back). Resolve
+    // the key from current config NOW, so an edited default/override takes effect
+    // immediately — never press a key the device baked in at push time.
+    const wire = p.event || p.value;
+    const { binding, button } = resolvePress(players, layouts, from, wire);
     // Always flash so the host can see who's pressing, even while paused —
     // only the actual keypress is gated.
     if (binding && forwardingAllowed(from)) void pressKey(binding);
-    const layout = assignedLayout(from);
-    const button = layout?.buttons.find(
-      (b) => encodeBinding(effectiveBinding(from, b)) === wire,
-    );
     if (button) flashButton(from, button.id);
     flashPlayer(from);
   });
